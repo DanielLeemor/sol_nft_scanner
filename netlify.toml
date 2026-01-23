@@ -1,0 +1,23 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Handle actions.json routing
+[[redirects]]
+  from = "/.well-known/actions.json"
+  to = "/api/actions/manifest"
+  status = 200
+
+# API routes handled by Next.js
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, PUT, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type, Authorization, Accept-Encoding"

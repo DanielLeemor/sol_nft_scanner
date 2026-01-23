@@ -1,0 +1,12 @@
+{
+  "rules": [
+    {
+      "pathPattern": "/api/actions/audit",
+      "apiPath": "/api/actions/audit"
+    },
+    {
+      "pathPattern": "/api/actions/reveal",
+      "apiPath": "/api/actions/reveal"
+    }
+  ]
+}
