@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { isValidSolanaAddress } from "@/app/lib/utils";
+import { TREASURY_WALLET } from "@/app/lib/constants";
 
 /**
  * GET /api/reports?wallet=WALLET_ADDRESS
@@ -19,12 +20,19 @@ export async function GET(request: NextRequest) {
         }
 
         // Fetch reports from Supabase
-        const { data: reports, error } = await supabase
+        let query = supabase
             .from("audit_reports")
             .select("id, wallet_address, status, created_at, report_json, pending_mints")
-            .eq("wallet_address", wallet)
             .order("created_at", { ascending: false })
             .limit(50);
+
+        // Standard user: see only their own reports
+        // Admin: see everything (so client-side processing can resume for target wallets)
+        if (wallet !== TREASURY_WALLET) {
+            query = query.eq("wallet_address", wallet);
+        }
+
+        const { data: reports, error } = await query;
 
         if (error) {
             console.error("Error fetching reports:", error);
