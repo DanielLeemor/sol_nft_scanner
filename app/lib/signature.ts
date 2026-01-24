@@ -115,6 +115,11 @@ export async function recordProcessedSignature(
     selectedCollections: string[],
     reportId?: string
 ): Promise<void> {
+    // Skip recording for Admin Bypass (avoids unique constraint error on "ADMIN_BYPASS" string)
+    if (signature.startsWith("ADMIN_BYPASS")) {
+        return;
+    }
+
     const { error } = await supabase.from("processed_signatures").insert({
         signature,
         wallet_address: walletAddress,

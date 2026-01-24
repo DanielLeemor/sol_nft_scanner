@@ -9,6 +9,11 @@ export async function checkRateLimit(wallet: string): Promise<{
     allowed: boolean;
     waitMinutes?: number;
 }> {
+    // Bypass rate limit in development mode
+    if (process.env.NODE_ENV === "development") {
+        return { allowed: true };
+    }
+
     const { data, error } = await supabase
         .from("wallet_scans")
         .select("last_scan_at, scan_count")

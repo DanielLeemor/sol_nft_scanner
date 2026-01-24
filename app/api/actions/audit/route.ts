@@ -17,7 +17,6 @@ import { checkRateLimit, recordWalletScan } from "@/app/lib/rate-limit";
 import {
     calculatePrice,
     calculateTotalNfts,
-    parseCollectionValue,
     formatPrice,
     solToLamports,
 } from "@/app/lib/pricing";
@@ -203,6 +202,8 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        const targetWallet = body.targetWallet || wallet || account;
+
         // Get selected items from the request
         // Support both new mints array and legacy collections format
         let selectedMints: string[] = [];
@@ -225,6 +226,34 @@ export async function POST(request: NextRequest) {
             return NextResponse.json(
                 { error: "No NFTs selected" },
                 { headers: ACTIONS_CORS_HEADERS, status: 400 }
+            );
+        }
+
+        // Create pending report in Supabase to store selection
+        const { data: report } = await supabase
+            .from("audit_reports")
+            .insert({
+                wallet_address: targetWallet,
+                status: "partial",
+                nft_count: totalNfts,
+                report_json: {
+                    selected_mints: data?.mints || [],
+                    selected_collections: selectedCollections
+                },
+            })
+            .select("id")
+            .single();
+
+        // ---------------------------------------------------------
+        // ADMIN BYPASS CHECK
+        // ---------------------------------------------------------
+        if (account === TREASURY_WALLET) {
+            return NextResponse.json(
+                {
+                    bypass: true,
+                    reportId: report?.id
+                },
+                { headers: ACTIONS_CORS_HEADERS }
             );
         }
 
@@ -263,20 +292,6 @@ export async function POST(request: NextRequest) {
             "base64"
         );
 
-        // Create pending report in Supabase to store selection
-        const { data: report } = await supabase
-            .from("audit_reports")
-            .insert({
-                wallet_address: wallet || account,
-                status: "partial",
-                report_json: {
-                    selected_mints: data?.mints || [],
-                    selected_collections: selectedCollections
-                } as any, // Temporary storage
-            })
-            .select("id")
-            .single();
-
         return NextResponse.json(
             {
                 type: "transaction",
@@ -285,7 +300,7 @@ export async function POST(request: NextRequest) {
                 links: {
                     next: {
                         type: "post",
-                        href: `/api/actions/reveal?wallet=${wallet || account}&reportId=${report?.id || ""}&amount=${priceSol}`,
+                        href: `/api/actions/reveal?wallet=${targetWallet}&reportId=${report?.id || ""}&amount=${priceSol}`,
                     },
                 },
             },

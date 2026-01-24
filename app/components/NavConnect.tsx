@@ -18,7 +18,8 @@ export default function NavConnect() {
                 borderRadius: '8px',
                 fontSize: '14px',
                 fontWeight: '600',
-                padding: '0 20px'
+                padding: '0 20px',
+                whiteSpace: 'nowrap'
             }} />
         </div>
     );

@@ -1,23 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ACTIONS_CORS_HEADERS, APP_URL } from "@/app/lib/constants";
 import { verifyPayment, recordProcessedSignature } from "@/app/lib/signature";
-import { supabase, NFTAuditData } from "@/app/lib/supabase";
+import { supabase, AuditReport } from "@/app/lib/supabase";
 import {
     fetchWalletNFTs,
     groupNFTsByCollection,
-    fetchNFTTransactionHistory,
-    extractLastSale,
     HeliusNFT,
 } from "@/app/lib/helius";
-import {
-    fetchCollectionListings,
-    buildTraitFloorMap,
-    analyzeNftTraits,
-    getCollectionFloor,
-} from "@/app/lib/magiceden";
-import { generateCSV, createAuditSummary } from "@/app/lib/csv";
-import { parseCollectionValue, calculateTotalNfts } from "@/app/lib/pricing";
-import { isValidSolanaAddress, fetchWithRetry } from "@/app/lib/utils";
+import { parseCollectionValue } from "@/app/lib/pricing";
+import { isValidSolanaAddress } from "@/app/lib/utils";
 
 /**
  * POST /api/actions/reveal
@@ -28,10 +19,45 @@ export async function POST(request: NextRequest) {
         const { searchParams } = new URL(request.url);
         const wallet = searchParams.get("wallet");
         const collectionsParam = searchParams.get("collections");
-        const expectedAmount = parseFloat(searchParams.get("amount") || "0");
+        const amountParam = searchParams.get("amount");
+        const reportIdParam = searchParams.get("reportId");
+        const expectedAmount = parseFloat(amountParam || "0");
 
-        const body = await request.json();
-        const { account, signature } = body;
+        const body = await request.json().catch(() => ({}));
+        const { account, signature, targetWallet: bodyTargetWallet, reportId: bodyReportId, data } = body;
+
+        // Initialize selection variables
+        let selectedMints: string[] = [];
+        let selectedCollections: string[] = [];
+        let targetWallet = bodyTargetWallet || wallet || account;
+        let finalReportId = bodyReportId || reportIdParam;
+
+        // 1. Try to load from existing report
+        if (finalReportId) {
+            const { data: reportData } = await supabase
+                .from("audit_reports")
+                .select("*")
+                .eq("id", finalReportId)
+                .single();
+
+            if (reportData) {
+                const rJson = reportData.report_json;
+                if (!Array.isArray(rJson)) {
+                    selectedMints = rJson.selected_mints || [];
+                    selectedCollections = rJson.selected_collections || [];
+                }
+                targetWallet = reportData.wallet_address || targetWallet;
+            }
+        }
+        // 2. Fallback to direct data payload
+        else if (data) {
+            if (data.mints) selectedMints = data.mints;
+            if (data.collections) selectedCollections = Array.isArray(data.collections) ? data.collections : [data.collections];
+        }
+        // 3. Fallback to URL params
+        else if (collectionsParam) {
+            selectedCollections = collectionsParam.split(",");
+        }
 
         // Validate inputs
         if (!account || !isValidSolanaAddress(account)) {
@@ -41,6 +67,10 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        // Verify payment
+        let verification: { verified: boolean; error?: string; payer?: string } = { verified: false, error: "Payment required" };
+        const { getPendingPaymentData } = await import("@/app/lib/signature");
+
         if (!signature) {
             return NextResponse.json(
                 { error: "Missing transaction signature" },
@@ -48,39 +78,52 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        let selectedCollections: string[] = [];
-        let selectedMints: string[] = [];
-        const reportId = searchParams.get("reportId");
-
-        // Try to load selection from Supabase report first (new granular mode)
-        if (reportId) {
-            const { data: pendingReport } = await supabase
-                .from("audit_reports")
-                .select("report_json")
-                .eq("id", reportId)
-                .single();
-
-            if (pendingReport?.report_json) {
-                const stored = pendingReport.report_json as any;
-                selectedMints = stored.selected_mints || [];
-                selectedCollections = stored.selected_collections || [];
-            }
-        }
-
-        // Fallback to URL params (legacy blink mode)
-        if (selectedMints.length === 0 && selectedCollections.length === 0) {
-            try {
-                selectedCollections = JSON.parse(decodeURIComponent(collectionsParam || "[]"));
-            } catch {
+        // ---------------------------------------------------------
+        // 1. Handle Admin Bypass
+        // ---------------------------------------------------------
+        if (signature === "ADMIN_BYPASS") {
+            const { TREASURY_WALLET } = await import("@/app/lib/constants");
+            if (account === TREASURY_WALLET) {
+                console.log(`[Admin Bypass] Authorized for ${account}`);
+                verification = { verified: true, error: "" };
+            } else {
                 return NextResponse.json(
-                    { error: "Invalid collections parameter" },
-                    { headers: ACTIONS_CORS_HEADERS, status: 400 }
+                    { error: "Unauthorized bypass attempt" },
+                    { headers: ACTIONS_CORS_HEADERS, status: 403 }
                 );
             }
         }
+        // ---------------------------------------------------------
+        // 2. Handle Existing Processed Signature
+        // ---------------------------------------------------------
+        else {
+            const existingData = await getPendingPaymentData(signature);
+            if (existingData && existingData.report_id) {
+                console.log(`[Reveal] Signature already processed, returning existing report: ${existingData.report_id}`);
+                return NextResponse.json(
+                    {
+                        type: "completed",
+                        title: "Report Ready!",
+                        description: `Your report for this audit is ready.`,
+                        icon: `${APP_URL}/success.png`,
+                        reportId: existingData.report_id,
+                        links: {
+                            actions: [
+                                {
+                                    type: "external-link",
+                                    label: "View Report Progress",
+                                    href: `${APP_URL}/reports?id=${existingData.report_id}`,
+                                },
+                            ],
+                        },
+                    },
+                    { headers: ACTIONS_CORS_HEADERS }
+                );
+            }
 
-        // Verify payment
-        const verification = await verifyPayment(signature, expectedAmount);
+            // 3. Regular Verification
+            verification = await verifyPayment(signature, expectedAmount);
+        }
 
         if (!verification.verified) {
             return NextResponse.json(
@@ -97,7 +140,6 @@ export async function POST(request: NextRequest) {
         }
 
         // Fetch NFTs and generate audit report
-        const targetWallet = wallet || account;
         const nfts = await fetchWalletNFTs(targetWallet);
         const collections = groupNFTsByCollection(nfts);
 
@@ -126,113 +168,64 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // Process each NFT
-        const auditData: NFTAuditData[] = [];
-        const traitFloorCache = new Map<string, Map<string, number>>();
-        const floorPriceCache = new Map<string, number>();
+        // Initialize the report as 'processing'
+        // We do NOT process the NFTs here to avoid timeouts.
+        const mintList = selectedNfts.map((n: HeliusNFT) => n.id);
 
-        for (const nft of selectedNfts) {
-            try {
-                const collectionGrouping = nft.grouping?.find(
-                    (g) => g.group_key === "collection"
-                );
-                const collectionId = collectionGrouping?.group_value || "Unknown";
-                const collectionName =
-                    collectionGrouping?.collection_metadata?.name || collectionId;
-                const collectionSymbol =
-                    collectionGrouping?.collection_metadata?.symbol ||
-                    collectionName.toLowerCase().replace(/\s+/g, "_");
+        // UPSERT the report in Supabase
+        // If finalReportId exists, it updates the "partial" report from the audit step.
+        // Otherwise it creates a new one.
+        const reportObj: Partial<AuditReport> & { id?: string } = {
+            wallet_address: targetWallet,
+            report_json: [], // Start/reset empty
+            status: "processing",
+            pending_mints: mintList,
+            nft_count: mintList.length,
+            created_at: new Date().toISOString() // Refresh timestamp
+        };
 
-                // Get or fetch trait floors for this collection
-                let traitFloors = traitFloorCache.get(collectionSymbol);
-                if (!traitFloors) {
-                    const listings = await fetchWithRetry(() =>
-                        fetchCollectionListings(collectionSymbol)
-                    );
-                    traitFloors = buildTraitFloorMap(listings);
-                    traitFloorCache.set(collectionSymbol, traitFloors);
-                }
-
-                // Get or fetch floor price
-                let floorPrice = floorPriceCache.get(collectionSymbol);
-                if (floorPrice === undefined) {
-                    floorPrice = await fetchWithRetry(() =>
-                        getCollectionFloor(collectionSymbol)
-                    );
-                    floorPriceCache.set(collectionSymbol, floorPrice);
-                }
-
-                // Analyze traits
-                const nftAttributes = nft.content?.metadata?.attributes;
-                const traitAnalysis = analyzeNftTraits(nftAttributes, traitFloors);
-
-                // Fetch transaction history
-                const txHistory = await fetchNFTTransactionHistory(nft.id);
-                const lastSale = extractLastSale(txHistory);
-
-                auditData.push({
-                    wallet_address: targetWallet,
-                    collection_name: collectionName,
-                    collection_id: collectionId,
-                    nft_id: nft.id,
-                    nft_name: nft.content?.metadata?.name || "Unknown",
-                    floor_price_sol: floorPrice,
-                    zero_price_trait_count: traitAnalysis.zeroCount,
-                    highest_trait_price_sol: traitAnalysis.highestTraitPrice,
-                    highest_trait_name: traitAnalysis.highestTraitName,
-                    last_tx_date: lastSale?.date || "N/A",
-                    last_tx_price_sol: lastSale?.price || 0,
-                    last_tx_from: lastSale?.from || "N/A",
-                    last_tx_to: lastSale?.to || "N/A",
-                });
-            } catch (nftError) {
-                console.error(`Error processing NFT ${nft.id}:`, nftError);
-                // Continue with other NFTs
-            }
+        if (finalReportId) {
+            reportObj.id = finalReportId;
         }
 
-        // Store report in Supabase
         const { data: report, error: reportError } = await supabase
             .from("audit_reports")
-            .insert({
-                wallet_address: targetWallet,
-                report_json: auditData,
-                status: auditData.length === selectedNfts.length ? "complete" : "partial",
-            })
+            .upsert(reportObj)
             .select("id")
             .single();
 
         if (reportError) {
             console.error("Error saving report:", reportError);
+            throw new Error(`Failed to initialize report: ${reportError.message}`);
         }
 
-        const finalReportId = reportId || report?.id;
+        if (report?.id) {
+            finalReportId = report.id;
+        }
 
         // Record the processed signature
         await recordProcessedSignature(
             signature,
             targetWallet,
             expectedAmount,
-            selectedMints.length || calculateTotalNfts(selectedCollections),
+            mintList.length,
             selectedCollections,
             finalReportId || undefined
         );
 
-        // Generate summary
-        const summary = createAuditSummary(auditData);
-
         return NextResponse.json(
             {
                 type: "completed",
-                title: "Audit Complete!",
-                description: `Analyzed ${summary.totalNfts} NFTs across ${summary.totalCollections} collections. Found ${summary.nftsWithHighValueTraits} NFTs with traits above floor price.`,
+                title: "Payment Verified!",
+                description: `Successfully verified payment for ${mintList.length} NFTs. Your report is being generated in the background.`,
                 icon: `${APP_URL}/success.png`,
+                reportId: finalReportId,
                 links: {
                     actions: [
                         {
                             type: "external-link",
-                            label: "Download CSV Report",
-                            href: `${APP_URL}/api/download?id=${finalReportId}`,
+                            label: "View Report Progress",
+                            href: `${APP_URL}/reports?id=${finalReportId}`,
                         },
                     ],
                 },

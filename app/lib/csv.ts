@@ -15,6 +15,7 @@ const CSV_HEADERS = [
     "last_tx_price_sol",
     "last_tx_from",
     "last_tx_to",
+    "last_tx_id",
 ];
 
 /**
@@ -45,20 +46,27 @@ export function generateCSV(auditData: NFTAuditData[]): string {
 
     // Data rows
     const dataRows = auditData.map((nft) => {
+        // We handle numbers specifically to ensure they are clean for Excel
+        const formatSol = (val: number | undefined | null) => {
+            if (val === undefined || val === null || isNaN(val)) return "0.000";
+            return val.toFixed(3);
+        };
+
         return [
             escapeCSVField(nft.wallet_address),
             escapeCSVField(nft.collection_name),
             escapeCSVField(nft.collection_id),
             escapeCSVField(nft.nft_id),
             escapeCSVField(nft.nft_name),
-            escapeCSVField(nft.floor_price_sol),
+            formatSol(nft.floor_price_sol),
             escapeCSVField(nft.zero_price_trait_count),
-            escapeCSVField(nft.highest_trait_price_sol),
+            formatSol(nft.highest_trait_price_sol),
             escapeCSVField(nft.highest_trait_name),
             escapeCSVField(nft.last_tx_date),
-            escapeCSVField(nft.last_tx_price_sol),
+            formatSol(nft.last_tx_price_sol),
             escapeCSVField(nft.last_tx_from),
             escapeCSVField(nft.last_tx_to),
+            escapeCSVField(nft.last_tx_id),
         ].join(",");
     });
 

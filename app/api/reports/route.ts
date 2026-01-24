@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
         // Fetch reports from Supabase
         const { data: reports, error } = await supabase
             .from("audit_reports")
-            .select("id, wallet_address, status, created_at, report_json")
+            .select("id, wallet_address, status, created_at, report_json, pending_mints")
             .eq("wallet_address", wallet)
             .order("created_at", { ascending: false })
             .limit(50);
@@ -40,21 +40,18 @@ export async function GET(request: NextRequest) {
             const createdAt = new Date(report.created_at);
             const hoursOld = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60);
 
-            // Count NFTs from report_json
-            let nftCount = 0;
-            if (Array.isArray(report.report_json)) {
-                nftCount = report.report_json.length;
-            } else if (report.report_json?.selected_mints) {
-                // Pending report - count selected mints
-                nftCount = report.report_json.selected_mints.length;
-            }
+            // Calculate total NFTs (processed + pending)
+            const processedCount = Array.isArray(report.report_json) ? report.report_json.length : 0;
+            const pendingCount = Array.isArray(report.pending_mints) ? report.pending_mints.length : 0;
+            const totalCount = processedCount + pendingCount;
 
             return {
                 id: report.id,
                 wallet_address: report.wallet_address,
                 status: report.status,
                 created_at: report.created_at,
-                nft_count: nftCount,
+                nft_count: totalCount,
+                pending_mints: report.pending_mints || [],
                 is_expired: hoursOld > 24
             };
         });
@@ -73,5 +70,35 @@ export async function GET(request: NextRequest) {
             { error: "Failed to fetch reports" },
             { status: 500 }
         );
+    }
+}
+
+/**
+ * DELETE /api/reports?id=REPORT_ID
+ * Delete a specific report
+ */
+export async function DELETE(request: NextRequest) {
+    try {
+        const { searchParams } = new URL(request.url);
+        const id = searchParams.get("id");
+
+        if (!id) {
+            return NextResponse.json({ error: "Missing report ID" }, { status: 400 });
+        }
+
+        const { error } = await supabase
+            .from("audit_reports")
+            .delete()
+            .eq("id", id);
+
+        if (error) {
+            console.error("Error deleting report:", error);
+            return NextResponse.json({ error: "Failed to delete report" }, { status: 500 });
+        }
+
+        return NextResponse.json({ success: true });
+    } catch (error) {
+        console.error("Delete report error:", error);
+        return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
 }

@@ -4,8 +4,10 @@ import { useState, useEffect } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import NavConnect from "../components/NavConnect";
 
 const WalletMultiButtonDynamic = dynamic(
+    // ... (keep this for the connect prompt below)
     async () => (await import("@solana/wallet-adapter-react-ui")).WalletMultiButton,
     { ssr: false }
 );
@@ -17,6 +19,7 @@ interface Report {
     created_at: string;
     nft_count: number;
     is_expired: boolean;
+    pending_mints?: string[];
 }
 
 export default function MyReportsPage() {
@@ -24,6 +27,7 @@ export default function MyReportsPage() {
     const [reports, setReports] = useState<Report[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         if (connected && publicKey) {
@@ -33,10 +37,48 @@ export default function MyReportsPage() {
         }
     }, [connected, publicKey]);
 
+    // Auto-process loop
+    useEffect(() => {
+        const processNextBatch = async () => {
+            const reportToProcess = reports.find(r =>
+                r.status === "processing" && !processingIds.has(r.id)
+            );
+
+            if (!reportToProcess) return;
+
+            setProcessingIds(prev => new Set(prev).add(reportToProcess.id));
+
+            try {
+                const res = await fetch("/api/reports/process", {
+                    method: "POST",
+                    body: JSON.stringify({ reportId: reportToProcess.id })
+                });
+
+                if (res.ok) {
+                    await fetchReports(); // Refresh data
+                }
+            } catch (err) {
+                console.error("Batch error:", err);
+            } finally {
+                setProcessingIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(reportToProcess.id);
+                    return next;
+                });
+            }
+        };
+
+        if (reports.some(r => r.status === "processing")) {
+            const timer = setTimeout(processNextBatch, 1000);
+            return () => clearTimeout(timer);
+        }
+    }, [reports, processingIds]);
+
     const fetchReports = async () => {
         if (!publicKey) return;
 
-        setLoading(true);
+        // Only show spinner on initial load, not for refreshes
+        if (reports.length === 0) setLoading(true);
         setError(null);
 
         try {
@@ -55,6 +97,32 @@ export default function MyReportsPage() {
         }
     };
 
+    const handleDelete = async (e: React.MouseEvent, id: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (!window.confirm("Are you sure you want to delete this report?")) {
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/reports?id=${id}`, {
+                method: "DELETE"
+            });
+
+            if (res.ok) {
+                // Optimistic update
+                setReports(prev => prev.filter(r => r.id !== id));
+            } else {
+                alert("Failed to delete report");
+            }
+        } catch (err) {
+            console.error("Delete error:", err);
+            alert("Error deleting report");
+        }
+    };
+
+    // ... formatDate and getStatusBadge unchanged ...
     const formatDate = (dateStr: string) => {
         const date = new Date(dateStr);
         return date.toLocaleDateString("en-US", {
@@ -75,8 +143,8 @@ export default function MyReportsPage() {
                 return <span className="status-badge complete">Complete</span>;
             case "partial":
                 return <span className="status-badge partial">Partial</span>;
-            case "pending":
-                return <span className="status-badge pending">Pending</span>;
+            case "processing":
+                return <span className="status-badge processing">Processing...</span>;
             case "failed":
                 return <span className="status-badge failed">Failed</span>;
             default:
@@ -87,23 +155,21 @@ export default function MyReportsPage() {
     return (
         <>
             <div className="bg-gradient" />
-
-            {/* Navigation */}
+            {/* ... navbar unchanged ... */}
             <nav className="navbar">
                 <div className="container">
                     <Link href="/" className="logo">
                         <img src="/logo.png" alt="SolNFTscanner" className="logo-img" />
                         SolNFTscanner
                     </Link>
-
-                    <WalletMultiButtonDynamic style={{
-                        background: 'linear-gradient(135deg, #9945FF 0%, #14F195 100%)',
-                        fontSize: '0.875rem',
-                        fontWeight: 600,
-                        padding: '0 20px',
-                        height: '44px',
-                        borderRadius: '10px'
-                    }} />
+                    <ul className="nav-links">
+                        <li><Link href="/#how-it-works">How It Works</Link></li>
+                        <li><Link href="/#pricing">Pricing</Link></li>
+                        <li><Link href="/#sample">Sample Report</Link></li>
+                        <li><Link href="/#faq">FAQ</Link></li>
+                        <li><Link href="/reports">My Reports</Link></li>
+                    </ul>
+                    <NavConnect />
                 </div>
             </nav>
 
@@ -163,42 +229,72 @@ export default function MyReportsPage() {
                         </div>
                     ) : (
                         <div className="reports-grid">
-                            {reports.map((report) => (
-                                <div key={report.id} className={`report-card ${report.is_expired ? "expired" : ""}`}>
-                                    <div className="report-card-header">
-                                        {getStatusBadge(report.status, report.is_expired)}
-                                        <span className="report-date">{formatDate(report.created_at)}</span>
-                                    </div>
+                            {reports.map((report) => {
+                                const total = report.nft_count;
+                                const pendingCount = report.pending_mints?.length || 0;
+                                const processedCount = total - pendingCount;
+                                const progress = total > 0 ? (processedCount / total) * 100 : 0;
 
-                                    <div className="report-card-body">
-                                        <div className="report-stat">
-                                            <span className="stat-value">{report.nft_count}</span>
-                                            <span className="stat-label">NFTs Analyzed</span>
+                                return (
+                                    <div key={report.id} className={`report-card ${report.is_expired ? "expired" : ""}`}>
+                                        <div className="report-card-header">
+                                            <div className="status-container">
+                                                {getStatusBadge(report.status, report.is_expired)}
+                                                <span className="report-date">{formatDate(report.created_at)}</span>
+                                            </div>
+
+                                            {!report.is_expired && (
+                                                <button
+                                                    className="btn-delete"
+                                                    onClick={(e) => handleDelete(e, report.id)}
+                                                    title="Delete Report"
+                                                >
+                                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                        <polyline points="3 6 5 6 21 6"></polyline>
+                                                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                                        <line x1="10" y1="11" x2="10" y2="17"></line>
+                                                        <line x1="14" y1="11" x2="14" y2="17"></line>
+                                                    </svg>
+                                                </button>
+                                            )}
+                                        </div>
+
+                                        <div className="report-card-body">
+                                            <div className="report-stat">
+                                                <span className="stat-value">{processedCount} / {total}</span>
+                                                <span className="stat-label">NFTs Processed</span>
+                                            </div>
+
+                                            {report.status === "processing" && (
+                                                <div className="progress-container">
+                                                    <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="report-card-footer">
+                                            {report.is_expired ? (
+                                                <span className="expired-text">Report expired after 24 hours</span>
+                                            ) : report.status === "complete" || (report.status === "partial" && processedCount > 0) ? (
+                                                <a
+                                                    href={`/api/download?id=${report.id}`}
+                                                    className="btn-download"
+                                                    download
+                                                >
+                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                                        <polyline points="7 10 12 15 17 10" />
+                                                        <line x1="12" y1="15" x2="12" y2="3" />
+                                                    </svg>
+                                                    Download CSV
+                                                </a>
+                                            ) : (
+                                                <span className="pending-text">Processing your data...</span>
+                                            )}
                                         </div>
                                     </div>
-
-                                    <div className="report-card-footer">
-                                        {report.is_expired ? (
-                                            <span className="expired-text">Report expired after 24 hours</span>
-                                        ) : report.status === "complete" || report.status === "partial" ? (
-                                            <a
-                                                href={`/api/download?id=${report.id}`}
-                                                className="btn-download"
-                                                download
-                                            >
-                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                                    <polyline points="7 10 12 15 17 10" />
-                                                    <line x1="12" y1="15" x2="12" y2="3" />
-                                                </svg>
-                                                Download CSV
-                                            </a>
-                                        ) : (
-                                            <span className="pending-text">Processing...</span>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     )}
 
@@ -306,8 +402,33 @@ export default function MyReportsPage() {
                 .report-card-header {
                     display: flex;
                     justify-content: space-between;
-                    align-items: center;
+                    align-items: flex-start;
                     margin-bottom: 20px;
+                }
+
+                .status-container {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+
+                .btn-delete {
+                    background: none;
+                    border: none;
+                    color: var(--text-muted);
+                    cursor: pointer;
+                    padding: 8px;
+                    border-radius: 8px;
+                    transition: all 0.2s ease;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+
+                .btn-delete:hover {
+                    color: #ff5252;
+                    background: rgba(255, 82, 82, 0.1);
+                    transform: scale(1.1);
                 }
 
                 .status-badge {
@@ -328,29 +449,28 @@ export default function MyReportsPage() {
                     color: #ffc107;
                 }
 
-                .status-badge.pending {
-                    background: rgba(0, 194, 255, 0.15);
-                    color: var(--solana-blue);
+                .status-badge.processing {
+                    background: rgba(153, 69, 255, 0.15);
+                    color: var(--solana-purple);
+                }
+                
+                .progress-container {
+                    width: 100%;
+                    height: 8px;
+                    background: rgba(255, 255, 255, 0.05);
+                    border-radius: 4px;
+                    margin-top: 20px;
+                    overflow: hidden;
                 }
 
-                .status-badge.failed, .status-badge.expired {
-                    background: rgba(255, 82, 82, 0.15);
-                    color: #ff5252;
+                .progress-bar {
+                    height: 100%;
+                    background: linear-gradient(90deg, #9945FF 0%, #14F195 100%);
+                    transition: width 0.5s ease;
                 }
 
-                .report-date {
-                    font-size: 0.875rem;
-                    color: var(--text-muted);
-                }
-
-                .report-card-body {
-                    padding: 20px 0;
-                    border-top: 1px solid rgba(255, 255, 255, 0.05);
-                    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-                }
-
-                .report-stat {
-                    text-align: center;
+                .report-card.expired {
+                    opacity: 0.6;
                 }
 
                 .report-stat .stat-value {

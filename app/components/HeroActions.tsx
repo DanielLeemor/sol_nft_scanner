@@ -75,14 +75,19 @@ export default function HeroActions() {
         };
     }, [selectedNftIds]);
 
+    const [targetWalletInput, setTargetWalletInput] = useState("");
+    const isAdmin = publicKey?.toBase58() === process.env.NEXT_PUBLIC_TREASURY_WALLET;
+
     const handleScan = async () => {
         if (!publicKey) return;
 
         setLoading(true);
         setError(null);
 
+        const walletToScan = (isAdmin && targetWalletInput) ? targetWalletInput : publicKey.toBase58();
+
         try {
-            const res = await fetch(`/api/scan?wallet=${publicKey.toBase58()}`);
+            const res = await fetch(`/api/scan?wallet=${walletToScan}`);
             const data = await res.json();
 
             if (!res.ok) {
@@ -161,12 +166,14 @@ export default function HeroActions() {
 
             // Send selected mints
             const selectedMints = Array.from(selectedNftIds);
+            const walletToScan = (isAdmin && targetWalletInput) ? targetWalletInput : publicKey.toBase58();
 
-            const res = await fetch(`/api/actions/audit?wallet=${publicKey.toBase58()}`, {
+            const res = await fetch(`/api/actions/audit?wallet=${walletToScan}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     account: publicKey.toBase58(),
+                    targetWallet: walletToScan,
                     data: {
                         mints: selectedMints
                     }
@@ -174,6 +181,37 @@ export default function HeroActions() {
             });
 
             const data = await res.json();
+
+            if (data.bypass) {
+                // Admin Bypass: Skip signing, go straight to reveal
+                // We just need to trigger the reveal backend logic to finalize the report
+                const revealRes = await fetch("/api/actions/reveal", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        account: publicKey.toBase58(),
+                        targetWallet: walletToScan,
+                        signature: "ADMIN_BYPASS", // Special flag
+                        reportId: data.reportId
+                    })
+                });
+
+                if (revealRes.ok) {
+                    const revealData = await revealRes.json();
+
+                    // Redirect to reports page after a short delay
+                    // This gives the user context that processing has started
+                    setTimeout(() => {
+                        window.location.href = "/reports";
+                    }, 2000);
+                } else {
+                    const errData = await revealRes.json();
+                    const errMsg = errData.error?.message || errData.error || "Unknown error";
+                    alert(`Report Generation Failed: ${errMsg}`);
+                }
+                return;
+            }
+
             if (data.transaction) {
                 alert("Transaction created! (Full integration pending)");
             } else if (data.error) {
@@ -208,13 +246,29 @@ export default function HeroActions() {
     return (
         <div className="flex flex-col items-start gap-6 w-full max-w-xl">
             {!scanResult ? (
-                <button
-                    onClick={handleScan}
-                    disabled={loading}
-                    className="btn-primary w-full justify-center"
-                >
-                    {loading ? "Scanning Wallet..." : "Audit My Portfolio"}
-                </button>
+                <div className="w-full space-y-4">
+                    {isAdmin && (
+                        <div className="w-full animate-in fade-in slide-in-from-top-2">
+                            <label className="text-xs font-semibold text-[var(--solana-green)] uppercase tracking-wider mb-2 block">
+                                Admin Mode: Target Wallet
+                            </label>
+                            <input
+                                type="text"
+                                value={targetWalletInput}
+                                onChange={(e) => setTargetWalletInput(e.target.value)}
+                                placeholder="Enter wallet address to audit..."
+                                className="w-full bg-[var(--bg-card)] border border-[var(--solana-green)]/50 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[var(--solana-green)]"
+                            />
+                        </div>
+                    )}
+                    <button
+                        onClick={handleScan}
+                        disabled={loading}
+                        className="btn-primary w-full justify-center"
+                    >
+                        {loading ? "Scanning Wallet..." : (isAdmin && targetWalletInput ? "Audit Target Wallet" : "Audit My Portfolio")}
+                    </button>
+                </div>
             ) : (
                 <div className="bg-[var(--bg-card)] border border-white/10 rounded-xl p-6 w-full animate-in fade-in slide-in-from-bottom-4 shadow-2xl">
                     <div className="flex justify-between items-center mb-4 pb-4 border-b border-white/10">
@@ -244,8 +298,8 @@ export default function HeroActions() {
                                         <div className="flex items-center gap-4 overflow-hidden">
                                             {/* Checkbox */}
                                             <div className={`w-5 h-5 rounded flex-shrink-0 flex items-center justify-center transition-colors border-2 ${isFullySelected || isPartiallySelected
-                                                    ? "bg-[var(--solana-purple)] border-[var(--solana-purple)]"
-                                                    : "border-white/30 group-hover:border-white/60"
+                                                ? "bg-[var(--solana-purple)] border-[var(--solana-purple)]"
+                                                : "border-white/30 group-hover:border-white/60"
                                                 }`}>
                                                 {isFullySelected && (
                                                     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -295,8 +349,8 @@ export default function HeroActions() {
                                                             }`}
                                                     >
                                                         <div className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center ${isNftSelected
-                                                                ? "bg-[var(--solana-purple)] border-[var(--solana-purple)]"
-                                                                : "border-white/30"
+                                                            ? "bg-[var(--solana-purple)] border-[var(--solana-purple)]"
+                                                            : "border-white/30"
                                                             }`}>
                                                             {isNftSelected && (
                                                                 <svg width="10" height="10" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">

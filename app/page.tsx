@@ -2,6 +2,7 @@
 
 import HeroActions from "./components/HeroActions";
 import NavConnect from "./components/NavConnect";
+import Link from "next/link";
 
 export default function Home() {
   return (
@@ -9,16 +10,16 @@ export default function Home() {
       {/* Navigation */}
       <nav className="navbar">
         <div className="container">
-          <div className="logo">
+          <Link href="/" className="logo">
             <img src="/logo.png" alt="SolNFTscanner" className="logo-img" />
             SolNFTscanner
-          </div>
+          </Link>
           <ul className="nav-links">
             <li><a href="#how-it-works">How It Works</a></li>
             <li><a href="#pricing">Pricing</a></li>
             <li><a href="#sample">Sample Report</a></li>
             <li><a href="#faq">FAQ</a></li>
-            <li><a href="/reports">My Reports</a></li>
+            <li><Link href="/reports">My Reports</Link></li>
           </ul>
           {/* Nav CTA */}
           <NavConnect />

@@ -20,9 +20,10 @@ export interface ProcessedSignature {
 export interface AuditReport {
     id: string;
     wallet_address: string;
-    report_json: NFTAuditData[];
-    status: "complete" | "partial" | "failed";
-    error_message?: string;
+    report_json: NFTAuditData[] | { selected_mints?: string[]; selected_collections?: string[] };
+    status: "complete" | "partial" | "failed" | "processing";
+    nft_count: number;
+    pending_mints?: string[];
     created_at?: string;
 }
 
@@ -47,4 +48,5 @@ export interface NFTAuditData {
     last_tx_price_sol: number;
     last_tx_from: string;
     last_tx_to: string;
+    last_tx_id: string;
 }
