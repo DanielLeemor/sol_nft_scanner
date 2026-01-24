@@ -803,26 +803,39 @@ body {
   }
 
   .navbar {
-    padding: 12px 0;
+    padding: 10px 0;
+  }
+
+  .logo {
+    gap: 8px;
+    font-size: 1.125rem;
+  }
+
+  /* Hide logo text on very small mobile to make room */
+  @media (max-width: 480px) {
+    .logo-text {
+      display: none;
+    }
   }
 
   .nav-links {
     display: flex;
-    gap: 16px;
-    font-size: 0.8125rem;
+    gap: 12px;
+    font-size: 0.75rem;
   }
 
-  /* Hide less important links on small mobile */
-  @media (max-width: 480px) {
+  /* Hide non-essential links on mobile to save space */
+  @media (max-width: 600px) {
     .nav-links li:not(:last-child) {
       display: none;
     }
   }
 
   .nav-wallet-btn .wallet-adapter-button {
-    padding: 0 12px !important;
-    font-size: 12px !important;
+    padding: 0 10px !important;
+    font-size: 11px !important;
     white-space: nowrap !important;
+    height: 36px !important;
   }
 
   .footer-content {
@@ -834,5 +847,10 @@ body {
   .footer-left {
     flex-direction: column;
     gap: 16px;
+  }
+
+  .navbar .container {
+    flex-wrap: nowrap;
+    gap: 10px;
   }
 }

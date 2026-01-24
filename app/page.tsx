@@ -12,7 +12,7 @@ export default function Home() {
         <div className="container">
           <Link href="/" className="logo">
             <img src="/logo.png" alt="SolNFTscanner" className="logo-img" />
-            SolNFTscanner
+            <span className="logo-text">SolNFTscanner</span>
           </Link>
           <ul className="nav-links">
             <li><a href="#how-it-works">How It Works</a></li>
