@@ -1,5 +1,5 @@
 
-const HELIUS_API_KEY = "6453e526-f8d3-41ec-9af2-1aba3a7ae9ed";
+const HELIUS_API_KEY = process.env.HELIUS_API_KEY || "";
 const MINT = "GCiW18GEkCbGV4DjZtc9f7EVTtykRLCnyjdWo93SZU2s"; // Drifter #6641
 
 interface HeliusTransaction {
