@@ -223,8 +223,37 @@ export default function HeroActions() {
                 // Send transaction via wallet
                 const signature = await sendTransaction(transaction, connection);
 
-                // Wait for confirmation
-                await connection.confirmTransaction(signature, "confirmed");
+                // Monitor confirmation manually for better reliability
+                let confirmed = false;
+                try {
+                    const latestBlockhash = await connection.getLatestBlockhash();
+                    const confirmation = await connection.confirmTransaction({
+                        signature,
+                        blockhash: latestBlockhash.blockhash,
+                        lastValidBlockHeight: latestBlockhash.lastValidBlockHeight
+                    }, "confirmed");
+
+                    if (confirmation.value.err) {
+                        throw new Error("Transaction failed on-chain");
+                    }
+                    confirmed = true;
+                } catch (confirmError) {
+                    console.warn("Confirmation timed out, checking status manually...", confirmError);
+
+                    // Fallback: Check status directly
+                    const status = await connection.getSignatureStatus(signature);
+                    if (status.value?.confirmationStatus === "confirmed" || status.value?.confirmationStatus === "finalized") {
+                        if (status.value.err) {
+                            throw new Error("Transaction failed on-chain");
+                        }
+                        confirmed = true;
+                        console.log("Transaction explicitly confirmed via status check.");
+                    }
+                }
+
+                if (!confirmed) {
+                    throw new Error("Transaction confirmation timed out. Please check your wallet history.");
+                }
 
                 // Call the REVEAL endpoint to finalize the report
                 const revealRes = await fetch(data.links.next.href, {

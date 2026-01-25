@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
         // Fetch reports from Supabase
         let query = supabase
             .from("audit_reports")
-            .select("id, wallet_address, status, created_at, report_json, pending_mints")
+            .select("id, wallet_address, status, created_at, report_json, pending_mints, nft_count")
             .order("created_at", { ascending: false })
             .limit(50);
 
@@ -50,9 +50,14 @@ export async function GET(request: NextRequest) {
 
             // Calculate total NFTs (processed + pending)
             const processedCount = Array.isArray(report.report_json) ? report.report_json.length : 0;
-            const pendingCount = Array.isArray(report.pending_mints) ? report.pending_mints.length : 0;
-            const totalCount = processedCount + pendingCount;
+            const pendingMints = Array.isArray(report.pending_mints) ? report.pending_mints : [];
+            const pendingCount = pendingMints.length;
 
+            let totalCount = processedCount + pendingCount;
+            // Fallback: If total seems 0 but DB says otherwise (e.g. partial uninitialized state)
+            if (totalCount === 0 && report.nft_count > 0) {
+                totalCount = report.nft_count;
+            }
             return {
                 id: report.id,
                 wallet_address: report.wallet_address,
