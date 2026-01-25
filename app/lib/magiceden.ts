@@ -72,15 +72,15 @@ export async function fetchCollectionListings(
         );
 
         if (!response.ok) {
-            console.warn(`Failed to fetch listings for ${collectionSymbol}: ${response.status}`);
-            return [];
+            const errText = await response.text().catch(() => "Unknown");
+            throw new Error(`Magic Eden API error: ${response.status} - ${errText}`);
         }
 
         const listings = await response.json();
         return Array.isArray(listings) ? listings : [];
     } catch (error) {
-        console.error(`Error fetching collection listings:`, error);
-        return [];
+        console.error(`Error fetching collection listings for ${collectionSymbol}:`, error);
+        throw error; // Re-throw so caller handles it
     }
 }
 

@@ -204,9 +204,28 @@ export async function fetchNFTTransactionHistory(
         let url = `https://api.helius.xyz/v0/addresses/${nftMintAddress}/transactions?api-key=${HELIUS_API_KEY}`;
         if (lastSignature) url += `&before=${lastSignature}`;
 
-        const response = await fetch(url);
+        let response: Response | null = null;
+        let attempts = 0;
 
-        if (!response.ok) {
+        while (attempts < 3) {
+            try {
+                response = await fetch(url);
+                if (response.ok) break;
+                if (response.status === 429 || response.status >= 500) {
+                    // Wait and retry
+                    await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempts)));
+                    attempts++;
+                } else {
+                    break; // Fatal error (400, 401, 404)
+                }
+            } catch (err) {
+                attempts++;
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+
+        if (!response || !response.ok) {
+            console.warn(`Failed to fetch tx history for ${nftMintAddress}: ${response?.status}`);
             break;
         }
 
