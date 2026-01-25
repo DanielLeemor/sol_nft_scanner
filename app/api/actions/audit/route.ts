@@ -116,8 +116,8 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        // Record the scan
-        await recordWalletScan(wallet);
+        // Record the scan - removed to prevent rate limiting on simple view
+        // await recordWalletScan(wallet);
 
         // Group NFTs by collection
         const collections = groupNFTsByCollection(nfts);

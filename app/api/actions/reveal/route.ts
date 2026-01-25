@@ -9,6 +9,7 @@ import {
 } from "@/app/lib/helius";
 import { parseCollectionValue } from "@/app/lib/pricing";
 import { isValidSolanaAddress } from "@/app/lib/utils";
+import { recordWalletScan } from "@/app/lib/rate-limit";
 
 /**
  * POST /api/actions/reveal
@@ -212,6 +213,9 @@ export async function POST(request: NextRequest) {
             selectedCollections,
             finalReportId || undefined
         );
+
+        // Record the scan to enforce rate limits on future attempts
+        await recordWalletScan(targetWallet);
 
         return NextResponse.json(
             {

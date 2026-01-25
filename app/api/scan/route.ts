@@ -33,8 +33,8 @@ export async function GET(request: NextRequest) {
         // Fetch NFTs
         const nfts = await fetchWalletNFTs(wallet);
 
-        // Record scan
-        await recordWalletScan(wallet);
+        // Record scan removed to prevent rate limiting on view
+        // await recordWalletScan(wallet);
 
         // Group
         const collections = groupNFTsByCollection(nfts);
