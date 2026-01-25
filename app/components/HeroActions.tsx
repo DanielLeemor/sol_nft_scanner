@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { useWallet } from "@solana/wallet-adapter-react";
+import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import dynamic from "next/dynamic";
+import { VersionedTransaction } from "@solana/web3.js";
 import { calculatePrice } from "@/app/lib/pricing";
 
 const WalletMultiButtonDynamic = dynamic(
@@ -33,7 +34,8 @@ interface ScanResult {
 }
 
 export default function HeroActions() {
-    const { publicKey, connected } = useWallet();
+    const { connection } = useConnection();
+    const { publicKey, connected, sendTransaction } = useWallet();
     const [loading, setLoading] = useState(false);
     const [scanResult, setScanResult] = useState<ScanResult | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -213,7 +215,38 @@ export default function HeroActions() {
             }
 
             if (data.transaction) {
-                alert("Transaction created! (Full integration pending)");
+                // Deserialize the transaction
+                const serializeConfig = { requireAllSignatures: false };
+                const txBuffer = Buffer.from(data.transaction, "base64");
+                const transaction = VersionedTransaction.deserialize(txBuffer);
+
+                // Send transaction via wallet
+                const signature = await sendTransaction(transaction, connection);
+
+                // Wait for confirmation
+                await connection.confirmTransaction(signature, "confirmed");
+
+                // Call the REVEAL endpoint to finalize the report
+                const revealRes = await fetch(data.links.next.href, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        account: publicKey.toBase58(),
+                        signature: signature,
+                        targetWallet: walletToScan,
+                        // reportId is already in the URL params from data.links.next.href
+                    })
+                });
+
+                if (revealRes.ok) {
+                    const revealData = await revealRes.json();
+                    // Redirect to reports page
+                    setTimeout(() => {
+                        window.location.href = "/reports";
+                    }, 2000);
+                } else {
+                    throw new Error("Report generation failed after payment");
+                }
             } else if (data.error) {
                 throw new Error(data.error);
             }
