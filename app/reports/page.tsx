@@ -40,11 +40,19 @@ export default function MyReportsPage() {
     // Auto-process loop
     useEffect(() => {
         const processNextBatch = async () => {
+            // Also pick up "partial" reports to trigger self-healing if they are stuck
             const reportToProcess = reports.find(r =>
-                r.status === "processing" && !processingIds.has(r.id)
+                (r.status === "processing" || r.status === "partial") && !processingIds.has(r.id)
             );
 
             if (!reportToProcess) return;
+
+            // Only process if it's not truly complete (status partial but all processed)
+            // But w/ self-healing, we should poke it anyway to mark it complete in DB if needed
+            // Let's refine: if partial and not expired, process it. `is_expired` checks created_at.
+            if (reportToProcess.status === "partial" && reportToProcess.is_expired) {
+                return;
+            }
 
             setProcessingIds(prev => new Set(prev).add(reportToProcess.id));
 
@@ -68,7 +76,12 @@ export default function MyReportsPage() {
             }
         };
 
-        if (reports.some(r => r.status === "processing")) {
+        // Trigger if any are processing OR partial (non-expired)
+        const hasWork = reports.some(r =>
+            r.status === "processing" || (r.status === "partial" && !r.is_expired)
+        );
+
+        if (hasWork) {
             const timer = setTimeout(processNextBatch, 1000);
             return () => clearTimeout(timer);
         }

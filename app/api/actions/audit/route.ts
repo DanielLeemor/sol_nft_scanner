@@ -262,14 +262,24 @@ export async function POST(request: NextRequest) {
         const priceLamports = solToLamports(priceSol);
 
         // Build the payment transaction
-        const connection = new Connection(HELIUS_RPC_URL, "confirmed");
+        // Fallback logic for RPC connection
+        let connection: Connection;
+        let blockhashInfo: { blockhash: string; lastValidBlockHeight: number };
+
+        try {
+            connection = new Connection(HELIUS_RPC_URL, "confirmed");
+            blockhashInfo = await connection.getLatestBlockhash("confirmed");
+        } catch (rpcError) {
+            console.warn("Primary RPC failed, falling back to public endpoint:", rpcError);
+            connection = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+            blockhashInfo = await connection.getLatestBlockhash("confirmed");
+        }
 
         const payerPubkey = new PublicKey(account);
         const treasuryPubkey = new PublicKey(TREASURY_WALLET);
 
-        // Get recent blockhash
-        const { blockhash, lastValidBlockHeight } =
-            await connection.getLatestBlockhash("confirmed");
+        // Get recent blockhash using the successful info
+        const { blockhash, lastValidBlockHeight } = blockhashInfo;
 
         // Create transfer instruction
         const transferInstruction = SystemProgram.transfer({

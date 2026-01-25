@@ -44,8 +44,14 @@ export async function GET(request: NextRequest) {
             );
         }
 
+        const safeReportJson = Array.isArray(report.report_json) ? report.report_json : [];
+        if (!Array.isArray(report.report_json) && report.report_json) {
+            // Log if we have data that isn't an array (e.g. config object)
+            console.warn("Report JSON is not an array:", typeof report.report_json);
+        }
+
         // Generate CSV
-        const csvContent = generateCSV(report.report_json);
+        const csvContent = generateCSV(safeReportJson);
 
         // Return CSV file
         const fileName = `soltrait-audit-${report.wallet_address.slice(0, 8)}-${reportId.slice(0, 8)}.csv`;
