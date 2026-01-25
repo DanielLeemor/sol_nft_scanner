@@ -125,21 +125,42 @@ export async function fetchNFTMetadataBatch(mintAddresses: string[]): Promise<He
     if (mintAddresses.length === 0) return [];
 
     // Helius allows up to 100 assets per batch
-    const response = await fetch(HELIUS_RPC_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: `batch-${Date.now()}`,
-            method: "getAssetBatch",
-            params: {
-                ids: mintAddresses
-            },
-        }),
-    });
+    let response: Response | null = null;
+    let attempts = 0;
 
-    if (!response.ok) {
-        throw new Error(`Helius Batch API error: ${response.status}`);
+    while (attempts < 3) {
+        try {
+            response = await fetch(HELIUS_RPC_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: `batch-${Date.now()}`,
+                    method: "getAssetBatch",
+                    params: {
+                        ids: mintAddresses
+                    },
+                }),
+            });
+
+            if (response.ok) break;
+
+            if (response.status === 429 || response.status >= 500) {
+                await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempts)));
+                attempts++;
+            } else {
+                throw new Error(`Helius Batch API error: ${response.status}`);
+            }
+        } catch (err) {
+            console.warn(`Batch fetch attempt ${attempts + 1} failed:`, err);
+            attempts++;
+            if (attempts >= 3) throw err;
+            await new Promise(r => setTimeout(r, 1000));
+        }
+    }
+
+    if (!response || !response.ok) {
+        throw new Error(`Helius Batch API error: ${response?.status}`);
     }
 
     const data = await response.json();
