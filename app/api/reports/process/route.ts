@@ -68,11 +68,12 @@ const CONFIG = {
     } as Record<string, number>,
 
     // Max concurrent reports being processed
+    // Increased to allow more users to test simultaneously
     MAX_CONCURRENT_REPORTS: {
-        free: 1,
-        developer: 3,
-        business: 5,
-        professional: 10
+        free: 3,
+        developer: 10,
+        business: 20,
+        professional: 50
     } as Record<string, number>
 };
 
@@ -140,10 +141,14 @@ async function processSalesInParallel(
 async function canProcessReport(): Promise<boolean> {
     const { maxConcurrent } = getTierConfig();
 
+    // Ignore reports older than 10 minutes to prevent deadlocks
+    const cutoffDate = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+
     const { count, error } = await supabase
         .from("audit_reports")
         .select("id", { count: "exact", head: true })
-        .eq("status", "processing");
+        .in("status", ["processing", "partial"])
+        .gt("created_at", cutoffDate);
 
     if (error) {
         console.error("Error checking concurrent reports:", error);
