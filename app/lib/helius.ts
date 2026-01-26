@@ -284,8 +284,8 @@ export async function fetchNFTTransactionHistory(
     const allTransactions: HeliusTransaction[] = [];
     let lastSignature: string | null = null;
 
-    // Fetch up to 2 pages (200 txs) to catch older sales
-    for (let i = 0; i < 2; i++) {
+    // Fetch just 1 page (100 txs) by default to save credits and speed up
+    for (let i = 0; i < 1; i++) {
         let url = `https://api.helius.xyz/v0/addresses/${nftMintAddress}/transactions?api-key=${HELIUS_API_KEY}`;
         if (lastSignature) url += `&before=${lastSignature}`;
 
@@ -584,7 +584,6 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
 /**
  * Main function to get last sale for an NFT
  * First tries the NFT_SALE filter, then falls back to general history parsing
- * If no sale found, returns the last transfer as a fallback (with price=0)
  */
 export async function getLastSaleForNFT(nftMintAddress: string): Promise<{
     date: string;
@@ -603,63 +602,9 @@ export async function getLastSaleForNFT(nftMintAddress: string): Promise<{
         }
     }
 
-    // Fallback: Parse general transaction history (includes all types)
+    // Fallback: Parse general transaction history
     const generalHistory = await fetchNFTTransactionHistory(nftMintAddress);
-    const lastSale = extractLastSale(generalHistory, nftMintAddress);
-    
-    // If we found a sale with price, return it
-    if (lastSale && lastSale.price > 0) {
-        return lastSale;
-    }
-    
-    // If no sale found, try to find the last transfer
-    // This helps for NFTs that were transferred but not sold recently
-    const lastTransfer = findLastTransfer(generalHistory, nftMintAddress);
-    if (lastTransfer) {
-        console.log(`[DEBUG] No sale found for ${nftMintAddress.substring(0, 8)}..., using last transfer`);
-        return lastTransfer;
-    }
-    
-    return lastSale; // Return even if price is 0
-}
-
-/**
- * Find the last transfer of an NFT (when no sale data is available)
- * Returns transfer info with price=0
- */
-function findLastTransfer(transactions: HeliusTransaction[], targetMint: string): {
-    date: string;
-    price: number;
-    from: string;
-    to: string;
-    signature: string;
-} | null {
-    if (!transactions || transactions.length === 0) {
-        return null;
-    }
-    
-    for (const tx of transactions) {
-        // Look for token transfer of this NFT
-        const nftTransfer = tx.tokenTransfers?.find(t => t.mint === targetMint);
-        
-        if (nftTransfer) {
-            const from = nftTransfer.fromUserAccount || tx.feePayer || "Unknown";
-            const to = nftTransfer.toUserAccount || "Unknown";
-            
-            // Skip if both are unknown
-            if (from === "Unknown" && to === "Unknown") continue;
-            
-            return {
-                date: new Date((tx.timestamp || 0) * 1000).toISOString(),
-                price: 0, // No price for transfers
-                from,
-                to,
-                signature: tx.signature || "Unknown"
-            };
-        }
-    }
-    
-    return null;
+    return extractLastSale(generalHistory, nftMintAddress);
 }
 
 /**

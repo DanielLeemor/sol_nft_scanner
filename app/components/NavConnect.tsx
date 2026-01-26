@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
 
-// Access env variable directly for client-side components
+// Treasury wallet for admin detection - use env var with fallback
 const TREASURY_WALLET = process.env.NEXT_PUBLIC_TREASURY_WALLET || "5mwMWEiidJ38XSnDeZawXP9Hfd4AE1qwUcZaqpDTPEFp";
 
 const WalletMultiButtonDynamic = dynamic(
@@ -19,8 +19,8 @@ export default function NavConnect() {
     return (
         <div className="nav-wallet-container" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {isAdmin && (
-                <Link
-                    href="/admin"
+                <Link 
+                    href="/admin" 
                     style={{
                         background: 'linear-gradient(135deg, #9945FF 0%, #14F195 100%)',
                         padding: '8px 16px',

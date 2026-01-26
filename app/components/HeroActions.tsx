@@ -78,7 +78,7 @@ export default function HeroActions() {
     }, [selectedNftIds]);
 
     const [targetWalletInput, setTargetWalletInput] = useState("");
-
+    
     // Treasury wallet for admin detection - use env var with fallback
     const TREASURY_WALLET = process.env.NEXT_PUBLIC_TREASURY_WALLET || "5mwMWEiidJ38XSnDeZawXP9Hfd4AE1qwUcZaqpDTPEFp";
     const isAdmin = publicKey?.toBase58() === TREASURY_WALLET;
