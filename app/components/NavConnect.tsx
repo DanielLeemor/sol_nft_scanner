@@ -3,7 +3,9 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { TREASURY_WALLET } from "@/app/lib/constants";
+
+// Access env variable directly for client-side components
+const TREASURY_WALLET = process.env.NEXT_PUBLIC_TREASURY_WALLET || "";
 
 const WalletMultiButtonDynamic = dynamic(
     async () => (await import("@solana/wallet-adapter-react-ui")).WalletMultiButton,
@@ -17,8 +19,8 @@ export default function NavConnect() {
     return (
         <div className="nav-wallet-container" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {isAdmin && (
-                <Link 
-                    href="/admin" 
+                <Link
+                    href="/admin"
                     style={{
                         background: 'linear-gradient(135deg, #9945FF 0%, #14F195 100%)',
                         padding: '8px 16px',
