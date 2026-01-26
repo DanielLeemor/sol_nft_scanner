@@ -377,9 +377,11 @@ export function extractLastSaleFromSaleHistory(
 ): {
     date: string;
     price: number;
+    fees: number;
     from: string;
     to: string;
     signature: string;
+    type: string;
 } | null {
     if (!transactions || transactions.length === 0) {
         return null;
@@ -411,29 +413,30 @@ export function extractLastSaleFromSaleHistory(
         const seller = nftEvent.seller || "Unknown";
         const buyer = nftEvent.buyer || "Unknown";
 
-        // Fix: Calculate GROSS price (Buyer pays Price + Royalties + Fees)
-        // The event.amount is usually just the seller's net.
-        // We sum all SOL leaving the buyer's wallet in this transaction to get the real cost.
+        // Calculate fees (difference between total paid and net sale)
+        let fees = 0;
         if (buyer !== "Unknown" && tx.nativeTransfers) {
             const totalPaidByBuyer = tx.nativeTransfers
                 .filter(t => t.fromUserAccount === buyer)
                 .reduce((sum, t) => sum + (t.amount || 0), 0) / 1e9;
 
-            // If buyer paid significantly more than the net event amount (e.g. >1% more), use the total paid
-            if (totalPaidByBuyer > price * 1.01) {
-                // console.log(`[Price Fix] Upgraded price from ${price} to ${totalPaidByBuyer} (Fees detected)`);
-                price = totalPaidByBuyer;
+            const netAmount = (nftEvent.amount || 0) / 1e9;
+            if (totalPaidByBuyer > netAmount * 1.01) {
+                fees = totalPaidByBuyer - netAmount;
+                price = totalPaidByBuyer; // Use total paid as the actual price
             }
         }
 
         if (price > 0) {
-            console.log(`[DEBUG] Found NFT_SALE - Price: ${price} SOL, Sig: ${tx.signature.substring(0, 8)}...`);
+            console.log(`[DEBUG] Found NFT_SALE - Price: ${price} SOL, Fees: ${fees.toFixed(4)}, Sig: ${tx.signature.substring(0, 8)}...`);
             return {
                 date: new Date((tx.timestamp || 0) * 1000).toISOString(),
                 price,
+                fees,
                 from: seller,
                 to: buyer,
                 signature: tx.signature,
+                type: "NFT_SALE"
             };
         }
     }
@@ -513,9 +516,11 @@ const LOW_CONFIDENCE_TYPES = new Set([
 export function extractLastSale(transactions: HeliusTransaction[], targetMint: string): {
     date: string;
     price: number;
+    fees: number;
     from: string;
     to: string;
     signature: string;
+    type: string;
 } | null {
     if (!transactions || transactions.length === 0) {
         return null;
@@ -527,6 +532,7 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
     const candidates: Array<{
         date: string;
         price: number;
+        fees: number;
         from: string;
         to: string;
         signature: string;
@@ -566,6 +572,7 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
                 candidates.push({
                     date: new Date((tx.timestamp || 0) * 1000).toISOString(),
                     price,
+                    fees: 0,
                     from,
                     to,
                     signature: tx.signature || "Unknown",
@@ -587,19 +594,38 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
             }
         }
 
-        // 3. Calculate SOL movement from native transfers
+        // 3. Calculate SOL movement from native transfers and fees
         let totalSolMovement = 0;
+        let totalFees = 0;
         let buyerAddress = "";
         let sellerAddress = "";
+        const solTransfers: number[] = [];
 
         if (tx.nativeTransfers && tx.nativeTransfers.length > 0) {
-            // Find the largest SOL transfer (likely the sale price)
+            // Collect all SOL transfers
             for (const transfer of tx.nativeTransfers) {
                 const amount = (transfer.amount || 0) / 1e9;
+                if (amount > 0.0001) { // Filter out dust
+                    solTransfers.push(amount);
+                }
                 if (amount > totalSolMovement) {
                     totalSolMovement = amount;
                     buyerAddress = transfer.fromUserAccount || "";
                     sellerAddress = transfer.toUserAccount || "";
+                }
+            }
+
+            // Calculate fees: sum of all transfers minus the largest (main sale price)
+            // Fees are typically: marketplace fee, royalties, etc.
+            if (solTransfers.length > 1) {
+                const sortedTransfers = [...solTransfers].sort((a, b) => b - a);
+                const mainSale = sortedTransfers[0];
+                const otherTransfers = sortedTransfers.slice(1);
+                totalFees = otherTransfers.reduce((sum, t) => sum + t, 0);
+
+                // Only count as fees if they're a reasonable percentage of sale (< 20%)
+                if (totalFees > mainSale * 0.2) {
+                    totalFees = 0; // Probably not fees, could be multiple sales or other
                 }
             }
         }
@@ -658,10 +684,11 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
 
         // Only add if we found a meaningful price and tier
         if (price > 0.005 && tier >= 2) { // Lowered from 0.01 to 0.005
-            console.log(`[extractLastSale] Candidate: type=${txType}, source=${source}, price=${price.toFixed(4)} SOL, tier=${tier}, sig=${tx.signature?.substring(0, 8)}...`);
+            console.log(`[extractLastSale] Candidate: type=${txType}, source=${source}, price=${price.toFixed(4)} SOL, fees=${totalFees.toFixed(4)}, tier=${tier}, sig=${tx.signature?.substring(0, 8)}...`);
             candidates.push({
                 date: new Date((tx.timestamp || 0) * 1000).toISOString(),
                 price,
+                fees: totalFees,
                 from,
                 to,
                 signature: tx.signature || "Unknown",
@@ -687,34 +714,38 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
     });
 
     const winner = candidates[0];
-    console.log(`[extractLastSale] Winner: type=${winner.type}, tier=${winner.tier}, price=${winner.price.toFixed(4)} SOL, date=${winner.date}, sig=${winner.signature.substring(0, 8)}...`);
+    console.log(`[extractLastSale] Winner: type=${winner.type}, tier=${winner.tier}, price=${winner.price.toFixed(4)} SOL, fees=${winner.fees.toFixed(4)}, date=${winner.date}, sig=${winner.signature.substring(0, 8)}...`);
 
     return {
         date: winner.date,
         price: winner.price,
+        fees: winner.fees,
         from: winner.from,
         to: winner.to,
-        signature: winner.signature
+        signature: winner.signature,
+        type: winner.type
     };
 }
 
 /**
  * Main function to get last sale for an NFT
  * Checks BOTH NFT_SALE transactions AND general history (for Mpl Core NFTs)
- * Returns the most recent sale from either source
+ * Returns the most recent sale from either source, including marketplace fees
  */
 export async function getLastSaleForNFT(nftMintAddress: string): Promise<{
     date: string;
     price: number;
+    fees: number;
     from: string;
     to: string;
     signature: string;
+    type: string;
 } | null> {
     console.log(`[getLastSaleForNFT] Starting lookup for ${nftMintAddress.substring(0, 8)}...`);
 
     // Get sales from NFT_SALE type filter
     const saleHistory = await fetchNFTSaleHistory(nftMintAddress);
-    let nftSaleResult: { date: string; price: number; from: string; to: string; signature: string; timestamp?: number } | null = null;
+    let nftSaleResult: { date: string; price: number; fees: number; from: string; to: string; signature: string; timestamp?: number; type: string } | null = null;
 
     if (saleHistory.length > 0) {
         console.log(`[getLastSaleForNFT] Found ${saleHistory.length} NFT_SALE transactions`);
@@ -726,16 +757,7 @@ export async function getLastSaleForNFT(nftMintAddress: string): Promise<{
                 ...extracted,
                 timestamp: matchingTx?.timestamp || 0
             };
-            console.log(`[getLastSaleForNFT] NFT_SALE result: ${nftSaleResult.price} SOL on ${nftSaleResult.date}`);
-
-            // Optimization: Return immediately
-            return {
-                date: nftSaleResult.date,
-                price: nftSaleResult.price,
-                from: nftSaleResult.from,
-                to: nftSaleResult.to,
-                signature: nftSaleResult.signature
-            };
+            console.log(`[getLastSaleForNFT] NFT_SALE result: ${nftSaleResult.price} SOL (fees: ${nftSaleResult.fees}) on ${nftSaleResult.date}`);
         }
     }
 
@@ -744,7 +766,7 @@ export async function getLastSaleForNFT(nftMintAddress: string): Promise<{
     const generalHistory = await fetchNFTTransactionHistory(nftMintAddress);
     console.log(`[getLastSaleForNFT] General history returned ${generalHistory.length} transactions`);
 
-    let generalResult: { date: string; price: number; from: string; to: string; signature: string; timestamp?: number } | null = null;
+    let generalResult: { date: string; price: number; fees: number; from: string; to: string; signature: string; timestamp?: number; type: string } | null = null;
     const extracted = extractLastSale(generalHistory, nftMintAddress);
     if (extracted && extracted.price > 0) {
         // Get timestamp from the result
@@ -753,19 +775,63 @@ export async function getLastSaleForNFT(nftMintAddress: string): Promise<{
             ...extracted,
             timestamp: matchingTx?.timestamp || 0
         };
-        console.log(`[getLastSaleForNFT] General result: ${generalResult.price} SOL on ${generalResult.date}`);
+        console.log(`[getLastSaleForNFT] General result: ${generalResult.price} SOL (fees: ${generalResult.fees}) on ${generalResult.date}`);
     }
 
-    // If we reach here, nftSaleResult was null (because we return early if found)
+    // Compare both results and return the most recent one
+    if (nftSaleResult && generalResult) {
+        const nftSaleTs = nftSaleResult.timestamp || new Date(nftSaleResult.date).getTime() / 1000;
+        const generalTs = generalResult.timestamp || new Date(generalResult.date).getTime() / 1000;
+
+        if (generalTs > nftSaleTs) {
+            console.log(`[getLastSaleForNFT] Using GENERAL result (more recent): ${generalResult.price} SOL`);
+            return {
+                date: generalResult.date,
+                price: generalResult.price,
+                fees: generalResult.fees,
+                from: generalResult.from,
+                to: generalResult.to,
+                signature: generalResult.signature,
+                type: generalResult.type
+            };
+        } else {
+            console.log(`[getLastSaleForNFT] Using NFT_SALE result (more recent): ${nftSaleResult.price} SOL`);
+            return {
+                date: nftSaleResult.date,
+                price: nftSaleResult.price,
+                fees: nftSaleResult.fees,
+                from: nftSaleResult.from,
+                to: nftSaleResult.to,
+                signature: nftSaleResult.signature,
+                type: nftSaleResult.type
+            };
+        }
+    }
+
+    // Return whichever result exists
+    if (nftSaleResult) {
+        console.log(`[getLastSaleForNFT] Returning NFT_SALE result: ${nftSaleResult.price} SOL`);
+        return {
+            date: nftSaleResult.date,
+            price: nftSaleResult.price,
+            fees: nftSaleResult.fees,
+            from: nftSaleResult.from,
+            to: nftSaleResult.to,
+            signature: nftSaleResult.signature,
+            type: nftSaleResult.type
+        };
+    }
 
     if (generalResult) {
         console.log(`[getLastSaleForNFT] Returning GENERAL result: ${generalResult.price} SOL`);
         return {
             date: generalResult.date,
             price: generalResult.price,
+            fees: generalResult.fees,
             from: generalResult.from,
             to: generalResult.to,
-            signature: generalResult.signature
+            signature: generalResult.signature,
+            type: generalResult.type
         };
     }
 

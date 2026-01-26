@@ -102,8 +102,8 @@ interface CollectionCache {
 async function processSalesInParallel(
     nfts: Array<{ id: string; name: string }>,
     maxConcurrent: number
-): Promise<Map<string, { date: string; price: number; from: string; to: string; signature: string } | null>> {
-    const results = new Map<string, { date: string; price: number; from: string; to: string; signature: string } | null>();
+): Promise<Map<string, { date: string; price: number; fees: number; from: string; to: string; signature: string; type: string } | null>> {
+    const results = new Map<string, { date: string; price: number; fees: number; from: string; to: string; signature: string; type: string } | null>();
 
     // Process in chunks of maxConcurrent
     for (let i = 0; i < nfts.length; i += maxConcurrent) {
@@ -211,6 +211,21 @@ export async function POST(request: NextRequest) {
         }
 
         let pendingMints = report.pending_mints || [];
+
+        // Get or set the frozen SOL price for this report
+        // This ensures ALL rows in the report use the same current SOL price
+        let frozenSolPrice = report.frozen_sol_price;
+        if (!frozenSolPrice) {
+            frozenSolPrice = await getCurrentSolPrice();
+            // Store it in the report so subsequent batches use the same price
+            await supabase
+                .from("audit_reports")
+                .update({ frozen_sol_price: frozenSolPrice })
+                .eq("id", reportId);
+            console.log(`[Process] Froze SOL price at $${frozenSolPrice.toFixed(2)} for report ${reportId}`);
+        } else {
+            console.log(`[Process] Using frozen SOL price $${frozenSolPrice.toFixed(2)} from report`);
+        }
 
         // SELF-HEALING: If partial but uninitialized
         if (pendingMints.length === 0 && report.status === "partial" && !Array.isArray(report.report_json)) {
@@ -328,8 +343,8 @@ export async function POST(request: NextRequest) {
         const salesResults = await processSalesInParallel(nftsForSaleLookup, parallelSales);
 
         // 8.5. Fetch SOL prices for USD calculations
-        // Get current SOL price (for floor/trait values)
-        const currentSolPrice = await getCurrentSolPrice();
+        // Use the frozen SOL price (set at report start) for consistency across all batches
+        const currentSolPrice = frozenSolPrice;
 
         // Collect unique sale dates for historical price lookup
         const saleDates = new Set<string>();
@@ -351,11 +366,11 @@ export async function POST(request: NextRequest) {
                 historicalPrices.set(dateStr, price);
             } catch (error) {
                 console.error(`[Process] Error getting historical price for ${dateStr}:`, error);
-                historicalPrices.set(dateStr, currentSolPrice); // Fallback to current
+                historicalPrices.set(dateStr, currentSolPrice); // Fallback to frozen
             }
         }
 
-        console.log(`[Process] Fetched ${historicalPrices.size} historical SOL prices, current: $${currentSolPrice.toFixed(2)}`);
+        console.log(`[Process] Fetched ${historicalPrices.size} historical SOL prices, current (frozen): $${currentSolPrice.toFixed(2)}`);
 
         // 9. Assemble final data
         for (const nft of nftsMetadata) {
@@ -391,6 +406,8 @@ export async function POST(request: NextRequest) {
             const lastSale = salesResults.get(nftId);
             const txDate = lastSale?.date || "N/A";
             const txPrice = lastSale?.price || 0;
+            const txFees = lastSale?.fees || 0;
+            const txType = lastSale?.type || "N/A";
             const txFrom = lastSale?.from || "N/A";
             const txTo = lastSale?.to || "N/A";
             const txId = lastSale?.signature || "N/A";
@@ -427,6 +444,8 @@ export async function POST(request: NextRequest) {
                 highest_trait_name: highestTraitName,
                 last_tx_date: txDate,
                 last_tx_price_sol: txPrice,
+                last_tx_fees_sol: Math.round(txFees * 10000) / 10000, // 4 decimal places for fees
+                last_tx_type: txType,
                 last_tx_from: txFrom,
                 last_tx_to: txTo,
                 last_tx_id: txId,

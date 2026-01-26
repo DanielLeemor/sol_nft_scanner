@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS audit_reports (
     report_json JSONB NOT NULL DEFAULT '[]'::jsonb,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'partial', 'complete', 'failed')),
     error_message TEXT,
+    frozen_sol_price DECIMAL(10, 2),  -- SOL price frozen at report start for consistency
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

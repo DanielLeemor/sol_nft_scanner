@@ -1,6 +1,6 @@
 import { NFTAuditData } from "./supabase";
 
-// CSV column headers - now includes USD fields
+// CSV column headers - now includes USD fields, fees, and tx_type
 const CSV_HEADERS = [
     "wallet_address",
     "collection_name",
@@ -15,6 +15,8 @@ const CSV_HEADERS = [
     "highest_trait_name",
     "last_tx_date",
     "last_tx_price_sol",
+    "last_tx_fees_sol",
+    "last_tx_type",
     "last_sale_usd",
     "sol_price_at_sale",
     "profit_vs_floor_usd",
@@ -59,6 +61,12 @@ export function generateCSV(auditData: NFTAuditData[]): string {
             return val.toFixed(3);
         };
         
+        // Format fees (4 decimal places for precision)
+        const formatFees = (val: number | undefined | null) => {
+            if (val === undefined || val === null || isNaN(val)) return "0.0000";
+            return val.toFixed(4);
+        };
+        
         // Format USD values (2 decimal places)
         const formatUsd = (val: number | undefined | null) => {
             if (val === undefined || val === null || isNaN(val)) return "0.00";
@@ -79,6 +87,8 @@ export function generateCSV(auditData: NFTAuditData[]): string {
             escapeCSVField(nft.highest_trait_name),
             escapeCSVField(nft.last_tx_date),
             formatSol(nft.last_tx_price_sol),
+            formatFees(nft.last_tx_fees_sol),
+            escapeCSVField(nft.last_tx_type || "N/A"),
             formatUsd(nft.last_sale_usd),
             formatUsd(nft.sol_price_at_sale),
             formatUsd(nft.profit_vs_floor_usd),

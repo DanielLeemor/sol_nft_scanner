@@ -49,6 +49,8 @@ export interface NFTAuditData {
     highest_trait_name: string;
     last_tx_date: string;
     last_tx_price_sol: number;
+    last_tx_fees_sol?: number;         // Transaction fees (marketplace, royalties)
+    last_tx_type?: string;             // Transaction type (NFT_SALE, DEPOSIT, etc.)
     last_tx_from: string;
     last_tx_to: string;
     last_tx_id: string;
