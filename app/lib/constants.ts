@@ -17,7 +17,8 @@ export const ADDITIONAL_TIER_SIZE = 100;
 export const COOLDOWN_MINUTES = 5;
 
 // Treasury wallet for receiving payments
-export const TREASURY_WALLET = process.env.TREASURY_WALLET || "";
+// Use NEXT_PUBLIC_ prefix so it's available client-side for admin detection
+export const TREASURY_WALLET = process.env.NEXT_PUBLIC_TREASURY_WALLET || process.env.TREASURY_WALLET || "";
 
 // API URLs
 export const HELIUS_RPC_URL = process.env.HELIUS_RPC_URL || "";

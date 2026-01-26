@@ -326,7 +326,7 @@ export async function getCollectionData(
     
     // Fallback to Tensor if Magic Eden doesn't have the collection
     // Tensor uses the collection's on-chain ID directly (which we have from Helius)
-    if (collectionId) {
+    if (collectionId && collectionId !== "Unknown") {
         try {
             const tensorFloor = await getTensorFloorPrice(collectionId);
             
@@ -342,6 +342,34 @@ export async function getCollectionData(
             }
         } catch (error) {
             console.error(`[Tensor] Fallback error for ${collectionName}:`, error);
+        }
+    }
+    
+    // If collection ID is Unknown, try Tensor with collection name as a last resort
+    // Some collections can be looked up by their slug which may match the name
+    if (collectionId === "Unknown" || !collectionId) {
+        const nameVariations = [
+            collectionName.toLowerCase().replace(/\s+/g, "_"),
+            collectionName.toLowerCase().replace(/\s+/g, ""),
+            collectionName.toLowerCase().replace(/\s+/g, "-"),
+        ];
+        
+        for (const nameSlug of nameVariations) {
+            try {
+                const tensorFloor = await getTensorFloorPrice(nameSlug);
+                if (tensorFloor > 0) {
+                    console.log(`[Tensor] Name-based lookup successful for "${collectionName}" -> "${nameSlug}": ${tensorFloor.toFixed(2)} SOL`);
+                    return {
+                        symbol: nameSlug,
+                        floorPrice: tensorFloor,
+                        listings: [],
+                        traitFloors: new Map(),
+                        source: "tensor",
+                    };
+                }
+            } catch {
+                // Continue to next variation
+            }
         }
     }
     

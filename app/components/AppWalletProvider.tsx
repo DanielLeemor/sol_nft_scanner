@@ -12,24 +12,7 @@ import { clusterApiUrl } from "@solana/web3.js";
 import "@solana/wallet-adapter-react-ui/styles.css";
 
 import { WalletError } from "@solana/wallet-adapter-base";
-import { useCallback, useEffect, useRef } from "react";
-import { useWallet } from "@solana/wallet-adapter-react";
-
-// Helper component to reset wallet selection on mount
-function WalletResetter() {
-    const { select } = useWallet();
-    const hasReset = useRef(false);
-
-    useEffect(() => {
-        // Force "Select Wallet" state on load ONLY ONCE
-        if (!hasReset.current) {
-            select(null);
-            console.log("Wallet selection reset");
-            hasReset.current = true;
-        }
-    }, [select]);
-    return null;
-}
+import { useCallback } from "react";
 
 export default function AppWalletProvider({
     children,
@@ -56,9 +39,9 @@ export default function AppWalletProvider({
 
     return (
         <ConnectionProvider endpoint={endpoint}>
-            <WalletProvider wallets={wallets} autoConnect={false} onError={onError}>
+            {/* autoConnect=true allows wallet to persist across page navigations */}
+            <WalletProvider wallets={wallets} autoConnect={true} onError={onError}>
                 <WalletModalProvider>
-                    <WalletResetter />
                     {children}
                 </WalletModalProvider>
             </WalletProvider>
