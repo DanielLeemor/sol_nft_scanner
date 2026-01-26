@@ -95,8 +95,7 @@ interface CollectionCache {
 
 /**
  * Process sale lookups in parallel with controlled concurrency
- * Finds the LAST ACTUAL SALE (marketplace transaction) - not transfers
- * User can identify their wallet in the from/to fields
+ * Finds the LAST ACTUAL SALE (most recent marketplace transaction) for each NFT
  */
 async function processSalesInParallel(
     nfts: Array<{ id: string; name: string }>,
@@ -111,8 +110,7 @@ async function processSalesInParallel(
         const chunkResults = await Promise.all(
             chunk.map(async (nft) => {
                 try {
-                    // Get the last ACTUAL SALE (not transfer)
-                    // Uses type=NFT_SALE filter to only find marketplace sales
+                    // Get the LAST sale (most recent marketplace transaction)
                     const sale = await getLastSaleForNFT(nft.id);
                     return { id: nft.id, sale };
                 } catch (error) {
@@ -315,7 +313,7 @@ export async function POST(request: NextRequest) {
         }
 
         // 8. Fetch sale history in parallel (this is the expensive part)
-        // Finds the LAST ACTUAL SALE - user can see their wallet in from/to
+        // Finds the LAST ACTUAL SALE (most recent marketplace transaction)
         const nftsForSaleLookup = nftsMetadata.map(nft => ({
             id: nft.id,
             name: nft.content?.metadata?.name || "Unknown"

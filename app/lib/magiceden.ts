@@ -45,12 +45,38 @@ const symbolCache = new Map<string, string | null>();
 /**
  * Known collection name to Magic Eden symbol mappings
  * Some collections have symbols that don't match their names at all
+ * Add mappings here when you discover them
  */
 const KNOWN_SYMBOL_MAPPINGS: Record<string, string> = {
+    // Goblins
     "goblins": "thatgoblin",
     "goblin": "thatgoblin",
     "that goblins": "thatgoblin",
     "thatgoblins": "thatgoblin",
+    
+    // Defi Dungeons
+    "defi dungeons": "defi_dungeons",
+    "defidungeons": "defi_dungeons",
+    "defi_dungeons": "defi_dungeons",
+    
+    // Bozo
+    "bozo": "bozo_collective",
+    "bozo collective": "bozo_collective",
+    "bozocollective": "bozo_collective",
+    
+    // CryptoTitans
+    "cryptotitans": "crypto_titans",
+    "crypto titans": "crypto_titans",
+    "crypto_titans": "crypto_titans",
+    
+    // GigaBuds
+    "gigabuds": "gigabuds",
+    "giga buds": "gigabuds",
+    "giga_buds": "gigabuds",
+    
+    // Primates
+    "primate": "primate",
+    "primates": "primate",
 };
 
 /**
@@ -199,6 +225,7 @@ export async function fetchCollectionStats(
 
 /**
  * Fetch all listings for a collection from Magic Eden
+ * Includes extensive logging for debugging trait issues
  */
 export async function fetchCollectionListings(
     collectionSymbol: string,
@@ -212,21 +239,44 @@ export async function fetchCollectionListings(
             headers["Authorization"] = `Bearer ${MAGIC_EDEN_API_KEY}`;
         }
         
-        const response = await fetch(
-            `${MAGIC_EDEN_API_BASE}/collections/${collectionSymbol}/listings?limit=${limit}`,
-            { headers }
-        );
+        const url = `${MAGIC_EDEN_API_BASE}/collections/${collectionSymbol}/listings?limit=${limit}`;
+        console.log(`[ME] Fetching listings from: ${url}`);
+        
+        const response = await fetch(url, { headers });
 
         if (!response.ok) {
             const errText = await response.text().catch(() => "Unknown");
-            console.warn(`Magic Eden API error for ${collectionSymbol}: ${response.status} - ${errText}`);
+            console.warn(`[ME] API error for ${collectionSymbol}: ${response.status} - ${errText.substring(0, 200)}`);
             return [];
         }
 
         const listings = await response.json();
-        return Array.isArray(listings) ? listings : [];
+        
+        if (!Array.isArray(listings)) {
+            console.warn(`[ME] Listings for ${collectionSymbol} is not an array:`, typeof listings);
+            return [];
+        }
+        
+        console.log(`[ME] Got ${listings.length} listings for ${collectionSymbol}`);
+        
+        // Log sample listing to debug trait structure
+        if (listings.length > 0) {
+            const sample = listings[0];
+            const hasTopLevelAttrs = sample.attributes && sample.attributes.length > 0;
+            const hasNestedAttrs = sample.token?.attributes && sample.token.attributes.length > 0;
+            console.log(`[ME] Sample listing - price: ${sample.price}, topLevelAttrs: ${hasTopLevelAttrs}, nestedAttrs: ${hasNestedAttrs}`);
+            
+            if (hasTopLevelAttrs) {
+                console.log(`[ME] Sample top-level attributes:`, JSON.stringify(sample.attributes.slice(0, 3)));
+            }
+            if (hasNestedAttrs) {
+                console.log(`[ME] Sample nested attributes:`, JSON.stringify(sample.token.attributes.slice(0, 3)));
+            }
+        }
+        
+        return listings;
     } catch (error) {
-        console.error(`Error fetching collection listings for ${collectionSymbol}:`, error);
+        console.error(`[ME] Error fetching collection listings for ${collectionSymbol}:`, error);
         return [];
     }
 }
@@ -237,16 +287,23 @@ export async function fetchCollectionListings(
  */
 export function buildTraitFloorMap(listings: MagicEdenListing[]): TraitFloorMap {
     const traitFloors = new Map<string, number>();
+    let listingsWithTraits = 0;
+    let totalTraitsFound = 0;
 
     for (const listing of listings) {
         const price = listing.price; // Price is in SOL
         
         // Attributes can be at top level or nested in token object
         const attributes = listing.attributes || listing.token?.attributes || [];
+        
+        if (attributes.length > 0) {
+            listingsWithTraits++;
+        }
 
         for (const attr of attributes) {
             if (!attr.trait_type || attr.value === undefined) continue;
             
+            totalTraitsFound++;
             const traitKey = `${attr.trait_type}: ${attr.value}`;
             const currentFloor = traitFloors.get(traitKey);
 
@@ -254,6 +311,14 @@ export function buildTraitFloorMap(listings: MagicEdenListing[]): TraitFloorMap 
                 traitFloors.set(traitKey, price);
             }
         }
+    }
+    
+    console.log(`[ME] Built trait floor map: ${traitFloors.size} unique traits from ${listingsWithTraits}/${listings.length} listings with attributes`);
+    
+    if (traitFloors.size > 0) {
+        // Log some sample traits
+        const samples = Array.from(traitFloors.entries()).slice(0, 3);
+        console.log(`[ME] Sample trait floors:`, samples.map(([k, v]) => `${k}: ${v} SOL`).join(", "));
     }
 
     return traitFloors;
@@ -325,12 +390,17 @@ export async function getCollectionData(
     traitFloors: TraitFloorMap;
     source: "magiceden" | "tensor" | "none";
 }> {
+    console.log(`[ME] getCollectionData called for: "${collectionName}" (symbol: ${collectionSymbol || 'none'}, id: ${collectionId?.substring(0, 8) || 'none'}...)`);
+    
     // First, try Magic Eden
     const workingSymbol = await findWorkingSymbol(collectionName, collectionSymbol, collectionId);
     
     if (workingSymbol) {
+        console.log(`[ME] Found working symbol: ${workingSymbol}`);
+        
         // Fetch floor price from Magic Eden
         const floorPrice = await getCollectionFloor(workingSymbol);
+        console.log(`[ME] Floor price for ${workingSymbol}: ${floorPrice} SOL`);
         
         // Fetch listings for trait analysis
         const listings = await fetchCollectionListings(workingSymbol);
@@ -347,19 +417,20 @@ export async function getCollectionData(
         };
     }
     
+    console.log(`[ME] No working symbol found for "${collectionName}", trying Tensor fallback...`);
+    
     // Fallback to Tensor if Magic Eden doesn't have the collection
-    // Tensor uses the collection's on-chain ID directly (which we have from Helius)
     if (collectionId) {
         try {
             const tensorFloor = await getTensorFloorPrice(collectionId);
             
             if (tensorFloor > 0) {
-                console.log(`[ME→Tensor] Fallback successful for "${collectionName}": ${tensorFloor.toFixed(2)} SOL`);
+                console.log(`[ME→Tensor] Fallback successful for "${collectionName}": ${tensorFloor.toFixed(4)} SOL`);
                 return {
                     symbol: null,
                     floorPrice: tensorFloor,
-                    listings: [], // Tensor free API doesn't provide listings
-                    traitFloors: new Map(), // No trait data without listings
+                    listings: [],
+                    traitFloors: new Map(),
                     source: "tensor",
                 };
             }
@@ -369,6 +440,7 @@ export async function getCollectionData(
     }
     
     // Neither Magic Eden nor Tensor has this collection
+    console.warn(`[ME] Could not get data for "${collectionName}" from either ME or Tensor`);
     return {
         symbol: null,
         floorPrice: 0,
