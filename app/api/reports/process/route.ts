@@ -38,18 +38,19 @@ import {
 const CONFIG = {
     // Set this based on your Helius plan
     HELIUS_TIER: process.env.HELIUS_TIER || "developer", // "free", "developer", "business"
-    
+
     // Magic Eden rate limiting
     ME_DELAY_MS: parseInt(process.env.ME_DELAY_MS || "150"), // Delay between ME calls
-    
+
     // Batch sizes per tier
+    // REDUCED to prevent timeouts with the new deeper history scans
     BATCH_SIZES: {
-        free: 5,
-        developer: 15,
-        business: 30,
-        professional: 50
+        free: 2,
+        developer: 5,
+        business: 15,
+        professional: 25
     } as Record<string, number>,
-    
+
     // Parallel processing within batch
     PARALLEL_SALES_LOOKUP: {
         free: 2,      // Conservative for 2 req/s
@@ -57,7 +58,7 @@ const CONFIG = {
         business: 25,  // Good for 50 req/s
         professional: 50
     } as Record<string, number>,
-    
+
     // Delay between batches (ms) to avoid rate limits
     BATCH_DELAY: {
         free: 1000,
@@ -65,7 +66,7 @@ const CONFIG = {
         business: 50,
         professional: 20
     } as Record<string, number>,
-    
+
     // Max concurrent reports being processed
     MAX_CONCURRENT_REPORTS: {
         free: 1,
@@ -102,11 +103,11 @@ async function processSalesInParallel(
     maxConcurrent: number
 ): Promise<Map<string, { date: string; price: number; from: string; to: string; signature: string } | null>> {
     const results = new Map<string, { date: string; price: number; from: string; to: string; signature: string } | null>();
-    
+
     // Process in chunks of maxConcurrent
     for (let i = 0; i < nfts.length; i += maxConcurrent) {
         const chunk = nfts.slice(i, i + maxConcurrent);
-        
+
         const chunkResults = await Promise.all(
             chunk.map(async (nft) => {
                 try {
@@ -119,17 +120,17 @@ async function processSalesInParallel(
                 }
             })
         );
-        
+
         for (const result of chunkResults) {
             results.set(result.id, result.sale);
         }
-        
+
         // Small delay between chunks to avoid rate limits
         if (i + maxConcurrent < nfts.length) {
             await new Promise(r => setTimeout(r, 50));
         }
     }
-    
+
     return results;
 }
 
@@ -138,17 +139,17 @@ async function processSalesInParallel(
  */
 async function canProcessReport(): Promise<boolean> {
     const { maxConcurrent } = getTierConfig();
-    
+
     const { count, error } = await supabase
         .from("audit_reports")
         .select("id", { count: "exact", head: true })
         .eq("status", "processing");
-    
+
     if (error) {
         console.error("Error checking concurrent reports:", error);
         return true; // Allow on error to not block
     }
-    
+
     return (count || 0) < maxConcurrent;
 }
 
@@ -166,7 +167,7 @@ async function canProcessReport(): Promise<boolean> {
 export async function POST(request: NextRequest) {
     const startTime = Date.now();
     const MAX_PROCESSING_TIME = 8000; // 8 seconds max to leave buffer for response
-    
+
     try {
         const { reportId } = await request.json();
 
@@ -239,7 +240,7 @@ export async function POST(request: NextRequest) {
 
         // 3. Get tier-based configuration
         const { batchSize, parallelSales, batchDelay } = getTierConfig();
-        
+
         console.log(`[Process] Using tier "${CONFIG.HELIUS_TIER}": batchSize=${batchSize}, parallelSales=${parallelSales}`);
 
         // 4. Take a batch based on tier
@@ -254,11 +255,11 @@ export async function POST(request: NextRequest) {
 
         // 6. Group NFTs by collection for efficient Magic Eden lookups
         const nftsByCollection = new Map<string, typeof nftsMetadata>();
-        
+
         for (const nft of nftsMetadata) {
             const collectionGrouping = nft.grouping?.find(g => g.group_key === "collection");
             const collectionId = collectionGrouping?.group_value || "Unknown";
-            
+
             if (!nftsByCollection.has(collectionId)) {
                 nftsByCollection.set(collectionId, []);
             }
@@ -268,19 +269,19 @@ export async function POST(request: NextRequest) {
         // 7. Pre-fetch Magic Eden data for all collections (efficient batching)
         for (const [collectionId, collectionNfts] of nftsByCollection) {
             if (collectionCache.has(collectionId)) continue;
-            
+
             const firstNft = collectionNfts[0];
             const collectionGrouping = firstNft.grouping?.find(g => g.group_key === "collection");
-            
+
             let collectionName = collectionGrouping?.collection_metadata?.name || collectionId;
             if (collectionName === collectionId || !collectionName) {
                 const nftName = firstNft.content?.metadata?.name || "";
                 const match = nftName.match(/^(.*?)\s*#\d+/);
                 if (match) collectionName = match[1].trim();
             }
-            
+
             const collectionSymbol = collectionGrouping?.collection_metadata?.symbol;
-            
+
             try {
                 const meData = await getCollectionData(collectionName, collectionSymbol, collectionId);
                 collectionCache.set(collectionId, {
@@ -288,7 +289,7 @@ export async function POST(request: NextRequest) {
                     traitFloors: meData.traitFloors,
                     symbol: meData.symbol
                 });
-                
+
                 if (meData.floorPrice > 0) {
                     const source = meData.source === "tensor" ? "Tensor" : "ME";
                     console.log(`[Process] Cached ${source} data for "${collectionName}": floor=${meData.floorPrice}`);
@@ -301,10 +302,10 @@ export async function POST(request: NextRequest) {
                     symbol: null
                 });
             }
-            
+
             // Rate limit delay between collection lookups
             await new Promise(r => setTimeout(r, CONFIG.ME_DELAY_MS));
-            
+
             // Check if we're running low on time
             if (Date.now() - startTime > MAX_PROCESSING_TIME) {
                 console.log(`[Process] Time limit approaching, will continue in next batch`);
@@ -318,13 +319,13 @@ export async function POST(request: NextRequest) {
             id: nft.id,
             name: nft.content?.metadata?.name || "Unknown"
         }));
-        
+
         const salesResults = await processSalesInParallel(nftsForSaleLookup, parallelSales);
 
         // 8.5. Fetch SOL prices for USD calculations
         // Get current SOL price (for floor/trait values)
         const currentSolPrice = await getCurrentSolPrice();
-        
+
         // Collect unique sale dates for historical price lookup
         const saleDates = new Set<string>();
         for (const [, sale] of salesResults) {
@@ -336,7 +337,7 @@ export async function POST(request: NextRequest) {
                 }
             }
         }
-        
+
         // Fetch historical prices for all unique dates
         const historicalPrices = new Map<string, number>();
         for (const dateStr of saleDates) {
@@ -348,7 +349,7 @@ export async function POST(request: NextRequest) {
                 historicalPrices.set(dateStr, currentSolPrice); // Fallback to current
             }
         }
-        
+
         console.log(`[Process] Fetched ${historicalPrices.size} historical SOL prices, current: $${currentSolPrice.toFixed(2)}`);
 
         // 9. Assemble final data
@@ -392,19 +393,19 @@ export async function POST(request: NextRequest) {
             // Calculate USD values
             let lastSaleUsd = 0;
             let solPriceAtSale = 0;
-            
+
             if (txPrice > 0 && txDate !== "N/A") {
                 const saleDateStr = txDate.split("T")[0];
                 solPriceAtSale = historicalPrices.get(saleDateStr) || currentSolPrice;
                 lastSaleUsd = txPrice * solPriceAtSale;
             }
-            
+
             const floorPriceUsd = floorPrice * currentSolPrice;
             const highestTraitUsd = highestTraitPrice * currentSolPrice;
-            
+
             // Profit vs floor (current floor USD - last sale USD)
             const profitVsFloorUsd = lastSaleUsd > 0 ? floorPriceUsd - lastSaleUsd : 0;
-            
+
             // Profit vs trait (use highest trait if available, else floor)
             const effectiveValueUsd = highestTraitUsd > 0 ? highestTraitUsd : floorPriceUsd;
             const profitVsTraitUsd = lastSaleUsd > 0 ? effectiveValueUsd - lastSaleUsd : 0;
