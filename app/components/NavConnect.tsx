@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useWallet } from "@solana/wallet-adapter-react";
 
 // Access env variable directly for client-side components
-const TREASURY_WALLET = process.env.NEXT_PUBLIC_TREASURY_WALLET || "";
+const TREASURY_WALLET = process.env.NEXT_PUBLIC_TREASURY_WALLET || "5mwMWEiidJ38XSnDeZawXP9Hfd4AE1qwUcZaqpDTPEFp";
 
 const WalletMultiButtonDynamic = dynamic(
     async () => (await import("@solana/wallet-adapter-react-ui")).WalletMultiButton,
