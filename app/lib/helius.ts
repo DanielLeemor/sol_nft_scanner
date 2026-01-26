@@ -709,8 +709,15 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
     // Sort by tier (highest first), then by TIMESTAMP (newest first)
     // We want the LAST sale, not the biggest sale!
     candidates.sort((a, b) => {
+        // Fix: For high confidence candidates (Tier >= 4), prioritize RECENCY over Tier.
+        // A recent Tier 4 (Transfer/Marketplace) is better than an old Tier 5 (Deposit).
+        // Tiers 4, 5, 6 are all "Valid Sales".
+        if (a.tier >= 4 && b.tier >= 4) {
+            return b.timestamp - a.timestamp;
+        }
+
+        // Otherwise, stick to Tier hierarchy
         if (b.tier !== a.tier) return b.tier - a.tier;
-        // For same tier, prefer NEWEST (most recent transaction)
         return b.timestamp - a.timestamp;
     });
 
