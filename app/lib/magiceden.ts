@@ -43,11 +43,28 @@ export type TraitFloorMap = Map<string, number>;
 const symbolCache = new Map<string, string | null>();
 
 /**
+ * Known collection name to Magic Eden symbol mappings
+ * Some collections have symbols that don't match their names at all
+ */
+const KNOWN_SYMBOL_MAPPINGS: Record<string, string> = {
+    "goblins": "thatgoblin",
+    "goblin": "thatgoblin",
+    "that goblins": "thatgoblin",
+    "thatgoblins": "thatgoblin",
+};
+
+/**
  * Generate possible Magic Eden symbol variations from collection name
  * Magic Eden symbols are typically lowercase, use underscores, and are human-readable
  */
 function generateSymbolVariations(collectionName: string, collectionSymbol?: string): string[] {
     const variations: string[] = [];
+    
+    // Check known mappings first
+    const lowerName = collectionName.toLowerCase().trim();
+    if (KNOWN_SYMBOL_MAPPINGS[lowerName]) {
+        variations.push(KNOWN_SYMBOL_MAPPINGS[lowerName]);
+    }
     
     // If we have an explicit symbol from metadata, try it first
     if (collectionSymbol) {
@@ -106,6 +123,8 @@ async function findWorkingSymbol(
         variations.push(collectionId.toLowerCase());
     }
     
+    console.log(`[ME] Trying ${variations.length} symbol variations for "${collectionName}": ${variations.slice(0, 5).join(", ")}...`);
+    
     const headers: Record<string, string> = {
         "Content-Type": "application/json",
     };
@@ -115,29 +134,33 @@ async function findWorkingSymbol(
     
     for (const symbol of variations) {
         try {
-            const response = await fetch(
-                `${MAGIC_EDEN_API_BASE}/collections/${symbol}/stats`,
-                { headers }
-            );
+            const url = `${MAGIC_EDEN_API_BASE}/collections/${symbol}/stats`;
+            const response = await fetch(url, { headers });
             
             if (response.ok) {
                 const stats = await response.json();
                 // Verify we got valid data
                 if (stats && (stats.floorPrice !== undefined || stats.listedCount !== undefined)) {
-                    console.log(`[ME] Found working symbol: ${symbol} for "${collectionName}"`);
+                    console.log(`[ME] Found working symbol: ${symbol} for "${collectionName}" (floor: ${stats.floorPrice})`);
                     symbolCache.set(cacheKey, symbol);
                     return symbol;
+                }
+            } else {
+                // Log rate limit or other errors
+                if (response.status === 429) {
+                    console.log(`[ME] Rate limited on symbol "${symbol}"`);
+                    await new Promise(r => setTimeout(r, 500));
                 }
             }
             
             // Small delay to avoid rate limiting
             await new Promise(r => setTimeout(r, 100));
-        } catch {
-            // Continue to next variation
+        } catch (error) {
+            console.log(`[ME] Error trying symbol "${symbol}":`, error);
         }
     }
     
-    console.warn(`[ME] Could not find working symbol for "${collectionName}" (tried: ${variations.slice(0, 5).join(", ")}...)`);
+    console.warn(`[ME] Could not find working symbol for "${collectionName}" (tried: ${variations.join(", ")})`);
     symbolCache.set(cacheKey, null);
     return null;
 }

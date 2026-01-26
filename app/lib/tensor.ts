@@ -47,28 +47,32 @@ export async function getTensorFloorPrice(collectionId: string): Promise<number>
         return cached.floorPrice;
     }
     
+    const url = `https://api.tensor.so/sol/collections/${collectionId}/floor`;
+    console.log(`[Tensor] Fetching floor price from: ${url}`);
+    
     try {
-        const response = await fetch(
-            `https://api.tensor.so/sol/collections/${collectionId}/floor`,
-            {
-                headers: {
-                    "Accept": "application/json",
-                },
-            }
-        );
+        const response = await fetch(url, {
+            headers: {
+                "Accept": "application/json",
+            },
+        });
+        
+        console.log(`[Tensor] Response status: ${response.status} for ${collectionId.substring(0, 8)}...`);
         
         if (!response.ok) {
-            console.log(`[Tensor] No data for collection ${collectionId.substring(0, 8)}...`);
+            const errorText = await response.text();
+            console.log(`[Tensor] Error response: ${errorText.substring(0, 200)}`);
             return 0;
         }
         
         const data: TensorFloorResponse = await response.json();
+        console.log(`[Tensor] Response data:`, JSON.stringify(data).substring(0, 200));
         
         if (data && data.price) {
             // Convert from lamports to SOL
             const floorPrice = data.price / 1e9;
             
-            console.log(`[Tensor] Found floor for ${collectionId.substring(0, 8)}...: ${floorPrice.toFixed(2)} SOL`);
+            console.log(`[Tensor] Found floor for ${collectionId.substring(0, 8)}...: ${floorPrice.toFixed(4)} SOL`);
             
             // Cache the result
             tensorCache.set(collectionId, {
@@ -79,9 +83,10 @@ export async function getTensorFloorPrice(collectionId: string): Promise<number>
             return floorPrice;
         }
         
+        console.log(`[Tensor] No price in response for ${collectionId.substring(0, 8)}...`);
         return 0;
     } catch (error) {
-        console.error(`[Tensor] Error fetching floor for ${collectionId}:`, error);
+        console.error(`[Tensor] FETCH ERROR for ${collectionId}:`, error);
         return 0;
     }
 }

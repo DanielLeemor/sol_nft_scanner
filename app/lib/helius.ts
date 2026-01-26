@@ -230,9 +230,11 @@ export async function fetchNFTSaleHistory(
     const allTransactions: HeliusTransaction[] = [];
     let lastSignature: string | null = null;
 
-    // Fetch up to 2 pages (200 txs) of NFT_SALE transactions
-    // Using type=NFT_SALE filter ensures we only get actual sales
-    for (let i = 0; i < 2; i++) {
+    console.log(`[Helius] Fetching NFT_SALE history for mint: ${nftMintAddress}`);
+
+    // Fetch up to 5 pages (500 txs) of NFT_SALE transactions
+    // Need more pages because staking/unstaking can push sales further back
+    for (let i = 0; i < 5; i++) {
         let url = `https://api.helius.xyz/v0/addresses/${nftMintAddress}/transactions?api-key=${HELIUS_API_KEY}&type=NFT_SALE`;
         if (lastSignature) url += `&before=${lastSignature}`;
 
@@ -242,35 +244,57 @@ export async function fetchNFTSaleHistory(
         while (attempts < 3) {
             try {
                 response = await fetch(url);
+                console.log(`[Helius] NFT_SALE page ${i+1} response status: ${response.status} for ${nftMintAddress.substring(0, 8)}...`);
                 if (response.ok) break;
                 if (response.status === 429 || response.status >= 500) {
                     // Wait and retry
+                    console.log(`[Helius] Rate limited or server error, retrying...`);
                     await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempts)));
                     attempts++;
                 } else {
+                    console.warn(`[Helius] Fatal error ${response.status} for ${nftMintAddress}`);
                     break; // Fatal error (400, 401, 404)
                 }
             } catch (err) {
+                console.error(`[Helius] Fetch error for ${nftMintAddress}:`, err);
                 attempts++;
                 await new Promise(r => setTimeout(r, 1000));
             }
         }
 
         if (!response || !response.ok) {
-            console.warn(`Failed to fetch NFT_SALE history for ${nftMintAddress}: ${response?.status}`);
+            console.warn(`[Helius] Failed to fetch NFT_SALE history for ${nftMintAddress}: ${response?.status}`);
             break;
         }
 
         const transactions = await response.json();
-        if (!Array.isArray(transactions) || transactions.length === 0) break;
+        console.log(`[Helius] NFT_SALE page ${i+1} returned ${Array.isArray(transactions) ? transactions.length : 0} transactions for ${nftMintAddress.substring(0, 8)}...`);
+        
+        if (!Array.isArray(transactions) || transactions.length === 0) {
+            console.log(`[Helius] No more NFT_SALE transactions for ${nftMintAddress.substring(0, 8)}...`);
+            break;
+        }
+
+        // Log first transaction details for debugging
+        if (i === 0 && transactions.length > 0) {
+            const firstTx = transactions[0];
+            console.log(`[Helius] First NFT_SALE tx: type=${firstTx.type}, source=${firstTx.source}, sig=${firstTx.signature?.substring(0, 8)}...`);
+            if (firstTx.events?.nft) {
+                console.log(`[Helius] NFT event: amount=${firstTx.events.nft.amount}, buyer=${firstTx.events.nft.buyer?.substring(0, 8)}..., seller=${firstTx.events.nft.seller?.substring(0, 8)}...`);
+            }
+        }
 
         allTransactions.push(...transactions);
         lastSignature = transactions[transactions.length - 1].signature;
 
         // If we got less than 100, we've reached the end
         if (transactions.length < 100) break;
+        
+        // Small delay to avoid rate limiting
+        await new Promise(r => setTimeout(r, 100));
     }
 
+    console.log(`[Helius] Total NFT_SALE transactions found: ${allTransactions.length} for ${nftMintAddress.substring(0, 8)}...`);
     return allTransactions;
 }
 
@@ -284,8 +308,10 @@ export async function fetchNFTTransactionHistory(
     const allTransactions: HeliusTransaction[] = [];
     let lastSignature: string | null = null;
 
-    // Fetch just 1 page (100 txs) by default to save credits and speed up
-    for (let i = 0; i < 1; i++) {
+    console.log(`[Helius] Fetching general tx history for mint: ${nftMintAddress.substring(0, 8)}...`);
+
+    // Fetch up to 3 pages (300 txs) to find sales that might be buried
+    for (let i = 0; i < 3; i++) {
         let url = `https://api.helius.xyz/v0/addresses/${nftMintAddress}/transactions?api-key=${HELIUS_API_KEY}`;
         if (lastSignature) url += `&before=${lastSignature}`;
 
@@ -309,19 +335,35 @@ export async function fetchNFTTransactionHistory(
         }
 
         if (!response || !response.ok) {
-            console.warn(`Failed to fetch tx history for ${nftMintAddress}: ${response?.status}`);
+            console.warn(`[Helius] Failed to fetch tx history for ${nftMintAddress}: ${response?.status}`);
             break;
         }
 
         const transactions = await response.json();
-        if (!Array.isArray(transactions) || transactions.length === 0) break;
+        if (!Array.isArray(transactions) || transactions.length === 0) {
+            console.log(`[Helius] No more transactions for ${nftMintAddress.substring(0, 8)}...`);
+            break;
+        }
+
+        // Log what types of transactions we're getting
+        if (i === 0) {
+            const typeCounts: Record<string, number> = {};
+            for (const tx of transactions) {
+                typeCounts[tx.type] = (typeCounts[tx.type] || 0) + 1;
+            }
+            console.log(`[Helius] General history page 1 for ${nftMintAddress.substring(0, 8)}... - Types:`, JSON.stringify(typeCounts));
+        }
 
         allTransactions.push(...transactions);
         lastSignature = transactions[transactions.length - 1].signature;
 
         if (transactions.length < 100) break;
+        
+        // Small delay to avoid rate limiting
+        await new Promise(r => setTimeout(r, 100));
     }
 
+    console.log(`[Helius] Total general transactions: ${allTransactions.length} for ${nftMintAddress.substring(0, 8)}...`);
     return allTransactions;
 }
 
@@ -388,16 +430,65 @@ export function extractLastSaleFromSaleHistory(
 /**
  * Legacy extraction function for general transaction history
  * Used as fallback when NFT_SALE filter returns no results
+ * 
+ * IMPORTANT: Mpl Core NFTs (like Goblins, Defi Dungeons) don't get tagged as NFT_SALE
+ * Purchases show as "deposit" with significant SOL movement
+ * We need to distinguish actual sales from staking rewards, collects, etc.
  */
 const MARKETPLACES = new Set([
     "MAGIC_EDEN",
+    "MAGIC_EDEN_V2", 
     "TENSOR",
+    "TENSORSWAP",
     "SOLANART",
     "OPENSEA",
     "SNIPER",
     "CORAL_CUBE",
     "HADESWAP",
-    "YAWWW"
+    "YAWWW",
+    "ME", // Magic Eden shorthand
+    "MPL_CORE" // Mpl Core marketplace interactions
+]);
+
+// Types that are DEFINITELY not sales - skip entirely
+const IGNORE_TYPES = new Set([
+    "NFT_BID",
+    "NFT_BID_CANCELLED",
+    "NFT_LISTING",
+    "NFT_CANCEL_LISTING",
+    "NFT_OFFER",
+    "NFT_OFFER_CANCELLED",
+    "UPDATEV1", // Plugin updates, not sales
+    "UPDATEPLUGINV1",
+    "ADDPLUGINV1",
+    "TRANSFERV1", // Simple transfers without payment
+    "CREATEV1", // NFT creation/mint (not a sale in secondary market sense)
+]);
+
+// Types that are LIKELY actual marketplace sales
+const HIGH_CONFIDENCE_SALE_TYPES = new Set([
+    "NFT_SALE",
+    "COMPRESSED_NFT_SALE",
+    "EXECUTE_SALE",
+    "BUY",
+    "CORESELL", // Mpl Core sell
+]);
+
+// Types that MIGHT be sales if they have significant SOL movement
+const POTENTIAL_SALE_TYPES = new Set([
+    "DEPOSIT", // Mpl Core purchases often show as deposit
+    "SWAP", // Some AMM sales
+    "NFT_MINT", 
+    "NFT_AUCTION_SETTLED",
+]);
+
+// Types that are usually NOT sales even with SOL movement
+const LOW_CONFIDENCE_TYPES = new Set([
+    "COLLECT", // Usually staking rewards
+    "CLAIM",
+    "WITHDRAW",
+    "STAKE",
+    "UNSTAKE",
 ]);
 
 export function extractLastSale(transactions: HeliusTransaction[], targetMint: string): {
@@ -411,6 +502,8 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
         return null;
     }
 
+    console.log(`[extractLastSale] Analyzing ${transactions.length} transactions for ${targetMint.substring(0, 8)}...`);
+
     // Scan ALL transactions to find candidates
     const candidates: Array<{
         date: string;
@@ -418,116 +511,126 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
         from: string;
         to: string;
         signature: string;
-        tier: number; // 4: Explicit NFT_SALE, 3: NFT Event, 2: Marketplace, 1: Unknown
+        tier: number; // 6: NFT_SALE event, 5: High confidence type, 4: Deposit with big SOL, 3: Marketplace, 2: Low confidence
         timestamp: number;
+        type: string;
     }> = [];
 
-    // Priority types for explicit event pricing
-    const SALE_TYPES = new Set(["NFT_SALE", "NFT_MINT", "NFT_AUCTION_SETTLED"]);
-
-    // Explicitly BLACKLIST non-sale types to avoid even looking at them
-    const IGNORE_TYPES = new Set([
-        "NFT_BID",
-        "NFT_BID_CANCELLED",
-        "NFT_LISTING",
-        "NFT_CANCEL_LISTING",
-        "NFT_OFFER",
-        "NFT_OFFER_CANCELLED",
-        "TRANSFER",
-        "UNKNOWN"
-    ]);
-
     for (const tx of transactions) {
-        if (IGNORE_TYPES.has(tx.type)) continue;
+        const txType = (tx.type || "UNKNOWN").toUpperCase();
+        
+        // Skip definitely non-sale types
+        if (IGNORE_TYPES.has(txType)) {
+            continue;
+        }
 
         let price = 0;
         let from = "Unknown";
         let to = "Unknown";
         let tier = 1;
+        
+        const source = (tx.source || "UNKNOWN").toUpperCase();
+        const isMarketplace = MARKETPLACES.has(source);
+        const isHighConfidenceType = HIGH_CONFIDENCE_SALE_TYPES.has(txType);
+        const isPotentialSaleType = POTENTIAL_SALE_TYPES.has(txType);
+        const isLowConfidenceType = LOW_CONFIDENCE_TYPES.has(txType);
 
-        // 1. Check for explicit NFT_SALE type first (highest priority)
-        if (tx.type === "NFT_SALE" && tx.events?.nft) {
+        // 1. Check for explicit NFT_SALE type with nft event (highest priority)
+        if (txType === "NFT_SALE" && tx.events?.nft) {
             const nftEvent = tx.events.nft;
             price = (nftEvent.amount || 0) / 1e9;
             from = nftEvent.seller || "Unknown";
             to = nftEvent.buyer || "Unknown";
             
             if (price > 0) {
+                console.log(`[extractLastSale] Found NFT_SALE event: ${price} SOL, sig=${tx.signature?.substring(0, 8)}...`);
                 candidates.push({
                     date: new Date((tx.timestamp || 0) * 1000).toISOString(),
                     price,
                     from,
                     to,
                     signature: tx.signature || "Unknown",
-                    tier: 4, // Highest tier for NFT_SALE
-                    timestamp: tx.timestamp || 0
+                    tier: 6,
+                    timestamp: tx.timestamp || 0,
+                    type: txType
                 });
                 continue;
             }
         }
 
-        // 2. Identify NFT Movement for this specific mint
+        // 2. Check for NFT event amount (even without NFT_SALE type)
+        if (tx.events?.nft?.amount) {
+            price = (tx.events.nft.amount || 0) / 1e9;
+            from = tx.events.nft.seller || from;
+            to = tx.events.nft.buyer || to;
+            if (price > 0) {
+                tier = 5;
+            }
+        }
+
+        // 3. Calculate SOL movement from native transfers
+        let totalSolMovement = 0;
+        let buyerAddress = "";
+        let sellerAddress = "";
+        
+        if (tx.nativeTransfers && tx.nativeTransfers.length > 0) {
+            // Find the largest SOL transfer (likely the sale price)
+            for (const transfer of tx.nativeTransfers) {
+                const amount = (transfer.amount || 0) / 1e9;
+                if (amount > totalSolMovement) {
+                    totalSolMovement = amount;
+                    buyerAddress = transfer.fromUserAccount || "";
+                    sellerAddress = transfer.toUserAccount || "";
+                }
+            }
+        }
+
+        // 4. Get NFT transfer info
         const nftTransfer = tx.tokenTransfers?.find(t => t.mint === targetMint);
-
-        // If NO NFT movement and NO explicit NFT event, skip
-        if (!nftTransfer && !tx.events?.nft) {
-            continue;
-        }
-
-        // Check Batch Status
-        const distinctMints = new Set(tx.tokenTransfers?.map(t => t.mint).filter(m => m));
-        const isBatch = distinctMints.size > 1;
-
         if (nftTransfer) {
-            from = nftTransfer.fromUserAccount || "Unknown";
-            to = nftTransfer.toUserAccount || "Unknown";
+            from = nftTransfer.fromUserAccount || from;
+            to = nftTransfer.toUserAccount || to;
         }
 
-        // 3. Check for NFT event with amount
-        let eventPrice = 0;
-        if (tx.events?.nft && tx.events.nft.amount) {
-            const eventType = tx.events.nft.type || tx.type;
-            if (SALE_TYPES.has(eventType)) {
-                eventPrice = (tx.events.nft.amount || 0) / 1e9;
-                from = tx.events.nft.seller || from;
-                to = tx.events.nft.buyer || to;
-                tier = 3;
-            }
+        // 5. Determine tier based on transaction characteristics
+        const hasSignificantSol = totalSolMovement >= 0.05; // At least 0.05 SOL for a real sale
+        const hasLargeSol = totalSolMovement >= 0.5; // 0.5+ SOL is almost certainly a sale
+        
+        // Use SOL movement as price if we don't have event price
+        if (price === 0 && totalSolMovement > 0) {
+            price = totalSolMovement;
         }
+        
+        // Update from/to with buyer/seller from SOL transfer if not set
+        if (from === "Unknown" && sellerAddress) from = sellerAddress;
+        if (to === "Unknown" && buyerAddress) to = buyerAddress;
 
-        // 4. Fallback: Native Flow Analysis (Bidirectional)
-        let calculatedPrice = 0;
-
-        if (!isBatch && tx.nativeTransfers && tx.nativeTransfers.length > 0 && from !== "Unknown" && to !== "Unknown") {
-            const outgoingFromBuyer = tx.nativeTransfers
-                .filter(t => t.fromUserAccount === to && t.toUserAccount !== to)
-                .reduce((sum, t) => sum + (t.amount || 0), 0) / 1e9;
-            const incomingToSeller = tx.nativeTransfers
-                .filter(t => t.toUserAccount === from && t.fromUserAccount !== from)
-                .reduce((sum, t) => sum + (t.amount || 0), 0) / 1e9;
-            calculatedPrice = Math.max(outgoingFromBuyer, incomingToSeller);
-        }
-
-        // Use event price if available, otherwise calculated price
-        if (eventPrice > 0) {
-            if (!isBatch && calculatedPrice > eventPrice && calculatedPrice < eventPrice * 1.25) {
-                price = calculatedPrice;
+        // Assign tier based on confidence
+        if (isHighConfidenceType && price > 0) {
+            tier = Math.max(tier, 5);
+        } else if (txType === "DEPOSIT" && hasLargeSol) {
+            // DEPOSIT with large SOL is almost certainly a purchase
+            tier = Math.max(tier, 5);
+        } else if (txType === "DEPOSIT" && hasSignificantSol) {
+            tier = Math.max(tier, 4);
+        } else if (isMarketplace && price > 0) {
+            tier = Math.max(tier, 4);
+        } else if (isPotentialSaleType && hasSignificantSol) {
+            tier = Math.max(tier, 3);
+        } else if (isLowConfidenceType) {
+            // collect, claim, etc. - only consider if VERY large amount
+            if (hasLargeSol) {
+                tier = 2; // Still low tier
             } else {
-                price = eventPrice;
+                continue; // Skip small collect/claim transactions
             }
-        } else {
-            price = calculatedPrice;
+        } else if (price > 0.05) {
+            tier = 2; // Unknown type but has SOL movement
         }
 
-        // 5. Update Tier based on source
-        if (tier < 3 && price > 0) {
-            const source = tx.source || "UNKNOWN";
-            if (MARKETPLACES.has(source)) {
-                tier = 2;
-            }
-        }
-
-        if (price > 0) {
+        // Only add if we found a meaningful price and tier
+        if (price > 0.01 && tier >= 2) {
+            console.log(`[extractLastSale] Candidate: type=${txType}, source=${source}, price=${price.toFixed(4)} SOL, tier=${tier}, sig=${tx.signature?.substring(0, 8)}...`);
             candidates.push({
                 date: new Date((tx.timestamp || 0) * 1000).toISOString(),
                 price,
@@ -535,49 +638,37 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
                 to,
                 signature: tx.signature || "Unknown",
                 tier,
-                timestamp: tx.timestamp || 0
+                timestamp: tx.timestamp || 0,
+                type: txType
             });
         }
     }
 
-    // Lower threshold to catch cheap collections/pools (0.005 SOL)
-    const MIN_SALE_THRESHOLD = 0.005;
+    console.log(`[extractLastSale] Found ${candidates.length} sale candidates`);
 
-    // Sort by tier (highest first), then by timestamp (newest first)
-    const tiersFound = Array.from(new Set(candidates.map(c => c.tier))).sort((a, b) => b - a);
-
-    for (const topTier of tiersFound) {
-        let tierCandidates = candidates.filter(c => c.tier === topTier);
-
-        if (topTier < 3) {
-            // Filter noise for low-confidence tiers
-            tierCandidates = tierCandidates.filter(c => c.price >= MIN_SALE_THRESHOLD);
-        }
-
-        if (tierCandidates.length > 0) {
-            // Sort by recency and return the newest from the highest occupied tier
-            const winner = tierCandidates.sort((a, b) => b.timestamp - a.timestamp)[0];
-
-            console.log(`[DEBUG] Extraction Winner - Tier: ${topTier}, Price: ${winner.price}, Sig: ${winner.signature.substring(0, 8)}...`);
-
-            return {
-                date: winner.date,
-                price: winner.price,
-                from: winner.from,
-                to: winner.to,
-                signature: winner.signature
-            };
-        }
+    if (candidates.length === 0) {
+        return null;
     }
 
-    // Final Fallback: Return most recent tx with 0 price
-    const lastTx = transactions[0];
+    // Sort by tier (highest first), then by price (highest first for same tier)
+    // This ensures we pick the actual sale over small rewards/fees
+    candidates.sort((a, b) => {
+        if (b.tier !== a.tier) return b.tier - a.tier;
+        // For same tier, prefer higher price (more likely to be actual sale)
+        if (Math.abs(b.price - a.price) > 0.1) return b.price - a.price;
+        // If prices are similar, prefer newer
+        return b.timestamp - a.timestamp;
+    });
+
+    const winner = candidates[0];
+    console.log(`[extractLastSale] Winner: type=${winner.type}, tier=${winner.tier}, price=${winner.price.toFixed(4)} SOL, sig=${winner.signature.substring(0, 8)}...`);
+
     return {
-        date: new Date((lastTx.timestamp || 0) * 1000).toISOString(),
-        price: 0,
-        from: lastTx.feePayer || "Unknown",
-        to: "Unknown",
-        signature: lastTx.signature || "Unknown",
+        date: winner.date,
+        price: winner.price,
+        from: winner.from,
+        to: winner.to,
+        signature: winner.signature
     };
 }
 
@@ -592,19 +683,35 @@ export async function getLastSaleForNFT(nftMintAddress: string): Promise<{
     to: string;
     signature: string;
 } | null> {
+    console.log(`[getLastSaleForNFT] Starting lookup for ${nftMintAddress.substring(0, 8)}...`);
+    
     // First, try to get sales using the NFT_SALE type filter (most reliable)
     const saleHistory = await fetchNFTSaleHistory(nftMintAddress);
     
     if (saleHistory.length > 0) {
+        console.log(`[getLastSaleForNFT] Found ${saleHistory.length} NFT_SALE transactions, extracting...`);
         const lastSale = extractLastSaleFromSaleHistory(saleHistory, nftMintAddress);
         if (lastSale && lastSale.price > 0) {
+            console.log(`[getLastSaleForNFT] SUCCESS from NFT_SALE: price=${lastSale.price}, from=${lastSale.from.substring(0, 8)}..., to=${lastSale.to.substring(0, 8)}...`);
             return lastSale;
         }
+        console.log(`[getLastSaleForNFT] NFT_SALE extraction returned no valid sale`);
+    } else {
+        console.log(`[getLastSaleForNFT] No NFT_SALE transactions found, trying general history...`);
     }
 
     // Fallback: Parse general transaction history
     const generalHistory = await fetchNFTTransactionHistory(nftMintAddress);
-    return extractLastSale(generalHistory, nftMintAddress);
+    console.log(`[getLastSaleForNFT] General history returned ${generalHistory.length} transactions`);
+    
+    const result = extractLastSale(generalHistory, nftMintAddress);
+    if (result) {
+        console.log(`[getLastSaleForNFT] General extraction: price=${result.price}, from=${result.from.substring(0, 8)}..., to=${result.to.substring(0, 8)}...`);
+    } else {
+        console.log(`[getLastSaleForNFT] No sale found in general history`);
+    }
+    
+    return result;
 }
 
 /**
