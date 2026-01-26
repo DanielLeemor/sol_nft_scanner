@@ -309,8 +309,9 @@ export async function fetchNFTTransactionHistory(
 
     console.log(`[Helius] Fetching general tx history for mint: ${nftMintAddress.substring(0, 8)}...`);
 
-    // Fetch up to 2 pages (200 txs) to find sales that might be buried
-    for (let i = 0; i < 2; i++) {
+    // Fetch up to 8 pages (800 txs) to find sales that might be buried
+    // Increased from 2 to 8 to handle active GameFi assets like Defi Dungeons
+    for (let i = 0; i < 8; i++) {
         let url = `https://api.helius.xyz/v0/addresses/${nftMintAddress}/transactions?api-key=${HELIUS_API_KEY}`;
         if (lastSignature) url += `&before=${lastSignature}`;
 

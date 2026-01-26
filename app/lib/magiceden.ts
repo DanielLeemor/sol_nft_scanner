@@ -42,6 +42,60 @@ export type TraitFloorMap = Map<string, number>;
 // Collection symbol lookup cache
 const symbolCache = new Map<string, string | null>();
 
+// Cache for mint -> collection symbol lookups
+const mintToSymbolCache = new Map<string, string | null>();
+
+/**
+ * Get collection symbol directly from Magic Eden using an NFT's mint address
+ * This is the MOST RELIABLE method - works for any collection!
+ */
+async function getCollectionSymbolFromMint(mintAddress: string): Promise<string | null> {
+    // Check cache first
+    if (mintToSymbolCache.has(mintAddress)) {
+        return mintToSymbolCache.get(mintAddress) || null;
+    }
+    
+    try {
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+        };
+        if (MAGIC_EDEN_API_KEY) {
+            headers["Authorization"] = `Bearer ${MAGIC_EDEN_API_KEY}`;
+        }
+        
+        // Magic Eden's token endpoint returns collection info
+        const url = `${MAGIC_EDEN_API_BASE}/tokens/${mintAddress}`;
+        console.log(`[ME] Looking up collection symbol via mint: ${mintAddress.substring(0, 8)}...`);
+        
+        const response = await fetch(url, { headers });
+        
+        if (!response.ok) {
+            console.log(`[ME] Token lookup failed for ${mintAddress.substring(0, 8)}...: ${response.status}`);
+            mintToSymbolCache.set(mintAddress, null);
+            return null;
+        }
+        
+        const data = await response.json();
+        const symbol = data?.collection;
+        
+        if (symbol) {
+            console.log(`[ME] Found collection symbol "${symbol}" from mint ${mintAddress.substring(0, 8)}...`);
+            mintToSymbolCache.set(mintAddress, symbol);
+            return symbol;
+        }
+        
+        mintToSymbolCache.set(mintAddress, null);
+        return null;
+    } catch (error) {
+        console.error(`[ME] Error looking up mint ${mintAddress}:`, error);
+        mintToSymbolCache.set(mintAddress, null);
+        return null;
+    }
+}
+
+
+
+
 /**
  * Known collection name to Magic Eden symbol mappings
  * Some collections have symbols that don't match their names at all
@@ -382,7 +436,8 @@ export async function getCollectionFloor(
 export async function getCollectionData(
     collectionName: string,
     collectionSymbol?: string,
-    collectionId?: string
+    collectionId?: string,
+    sampleMintAddress?: string
 ): Promise<{
     symbol: string | null;
     floorPrice: number;
@@ -393,7 +448,20 @@ export async function getCollectionData(
     console.log(`[ME] getCollectionData called for: "${collectionName}" (symbol: ${collectionSymbol || 'none'}, id: ${collectionId?.substring(0, 8) || 'none'}...)`);
     
     // First, try Magic Eden
-    const workingSymbol = await findWorkingSymbol(collectionName, collectionSymbol, collectionId);
+    let workingSymbol: string | null = null;
+    
+    // METHOD 1: Use mint address to get collection symbol (MOST RELIABLE)
+    if (sampleMintAddress) {
+        workingSymbol = await getCollectionSymbolFromMint(sampleMintAddress);
+        if (workingSymbol) {
+            console.log(`[ME] Got symbol "${workingSymbol}" from mint lookup`);
+        }
+    }
+    
+    // METHOD 2: Try symbol variations from name (fallback)
+    if (!workingSymbol) {
+        workingSymbol = await findWorkingSymbol(collectionName, collectionSymbol, collectionId);
+    }
     
     if (workingSymbol) {
         console.log(`[ME] Found working symbol: ${workingSymbol}`);

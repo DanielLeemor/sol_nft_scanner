@@ -302,8 +302,11 @@ export async function POST(request: NextRequest) {
 
             const collectionSymbol = collectionGrouping?.collection_metadata?.symbol;
 
+            // Get a sample mint address from this collection for ME lookup
+            const sampleMintAddress = firstNft.id;
+
             try {
-                const meData = await getCollectionData(collectionName, collectionSymbol, collectionId);
+                const meData = await getCollectionData(collectionName, collectionSymbol, collectionId, sampleMintAddress);
                 collectionCache.set(collectionId, {
                     floorPrice: meData.floorPrice,
                     traitFloors: meData.traitFloors,
