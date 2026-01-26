@@ -46,7 +46,7 @@ const CONFIG = {
     // REDUCED to prevent timeouts with the new deeper history scans
     BATCH_SIZES: {
         free: 2,
-        developer: 5,
+        developer: 3,
         business: 15,
         professional: 25
     } as Record<string, number>,

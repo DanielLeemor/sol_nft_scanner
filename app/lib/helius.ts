@@ -232,9 +232,8 @@ export async function fetchNFTSaleHistory(
 
     console.log(`[Helius] Fetching NFT_SALE history for mint: ${nftMintAddress}`);
 
-    // Fetch up to 3 pages (300 txs) of NFT_SALE transactions
-    // Reduced from 5 to prevent timeouts while still catching most use cases
-    for (let i = 0; i < 3; i++) {
+    // Fetch up to 8 pages (800 txs) of NFT_SALE transactions to catch sales from years ago
+    for (let i = 0; i < 8; i++) {
         let url = `https://api.helius.xyz/v0/addresses/${nftMintAddress}/transactions?api-key=${HELIUS_API_KEY}&type=NFT_SALE`;
         if (lastSignature) url += `&before=${lastSignature}`;
 
@@ -408,9 +407,24 @@ export function extractLastSaleFromSaleHistory(
         }
 
         // Extract sale details from the nft event
-        const price = (nftEvent.amount || 0) / 1e9; // Convert lamports to SOL
+        let price = (nftEvent.amount || 0) / 1e9; // Convert lamports to SOL
         const seller = nftEvent.seller || "Unknown";
         const buyer = nftEvent.buyer || "Unknown";
+
+        // Fix: Calculate GROSS price (Buyer pays Price + Royalties + Fees)
+        // The event.amount is usually just the seller's net.
+        // We sum all SOL leaving the buyer's wallet in this transaction to get the real cost.
+        if (buyer !== "Unknown" && tx.nativeTransfers) {
+            const totalPaidByBuyer = tx.nativeTransfers
+                .filter(t => t.fromUserAccount === buyer)
+                .reduce((sum, t) => sum + (t.amount || 0), 0) / 1e9;
+
+            // If buyer paid significantly more than the net event amount (e.g. >1% more), use the total paid
+            if (totalPaidByBuyer > price * 1.01) {
+                // console.log(`[Price Fix] Upgraded price from ${price} to ${totalPaidByBuyer} (Fees detected)`);
+                price = totalPaidByBuyer;
+            }
+        }
 
         if (price > 0) {
             console.log(`[DEBUG] Found NFT_SALE - Price: ${price} SOL, Sig: ${tx.signature.substring(0, 8)}...`);
@@ -713,6 +727,15 @@ export async function getLastSaleForNFT(nftMintAddress: string): Promise<{
                 timestamp: matchingTx?.timestamp || 0
             };
             console.log(`[getLastSaleForNFT] NFT_SALE result: ${nftSaleResult.price} SOL on ${nftSaleResult.date}`);
+
+            // Optimization: Return immediately
+            return {
+                date: nftSaleResult.date,
+                price: nftSaleResult.price,
+                from: nftSaleResult.from,
+                to: nftSaleResult.to,
+                signature: nftSaleResult.signature
+            };
         }
     }
 
@@ -733,43 +756,7 @@ export async function getLastSaleForNFT(nftMintAddress: string): Promise<{
         console.log(`[getLastSaleForNFT] General result: ${generalResult.price} SOL on ${generalResult.date}`);
     }
 
-    // Compare both results and return the most recent one
-    if (nftSaleResult && generalResult) {
-        const nftSaleTs = nftSaleResult.timestamp || new Date(nftSaleResult.date).getTime() / 1000;
-        const generalTs = generalResult.timestamp || new Date(generalResult.date).getTime() / 1000;
-
-        if (generalTs > nftSaleTs) {
-            console.log(`[getLastSaleForNFT] Using GENERAL result (more recent): ${generalResult.price} SOL`);
-            return {
-                date: generalResult.date,
-                price: generalResult.price,
-                from: generalResult.from,
-                to: generalResult.to,
-                signature: generalResult.signature
-            };
-        } else {
-            console.log(`[getLastSaleForNFT] Using NFT_SALE result (more recent): ${nftSaleResult.price} SOL`);
-            return {
-                date: nftSaleResult.date,
-                price: nftSaleResult.price,
-                from: nftSaleResult.from,
-                to: nftSaleResult.to,
-                signature: nftSaleResult.signature
-            };
-        }
-    }
-
-    // Return whichever result exists
-    if (nftSaleResult) {
-        console.log(`[getLastSaleForNFT] Returning NFT_SALE result: ${nftSaleResult.price} SOL`);
-        return {
-            date: nftSaleResult.date,
-            price: nftSaleResult.price,
-            from: nftSaleResult.from,
-            to: nftSaleResult.to,
-            signature: nftSaleResult.signature
-        };
-    }
+    // If we reach here, nftSaleResult was null (because we return early if found)
 
     if (generalResult) {
         console.log(`[getLastSaleForNFT] Returning GENERAL result: ${generalResult.price} SOL`);
