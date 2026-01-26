@@ -451,6 +451,7 @@ const MARKETPLACES = new Set([
 ]);
 
 // Types that are DEFINITELY not sales - skip entirely
+// NOTE: Be careful not to over-filter - Mpl Core transactions can have unusual types
 const IGNORE_TYPES = new Set([
     "NFT_BID",
     "NFT_BID_CANCELLED",
@@ -461,8 +462,8 @@ const IGNORE_TYPES = new Set([
     "UPDATEV1", // Plugin updates, not sales
     "UPDATEPLUGINV1",
     "ADDPLUGINV1",
-    "TRANSFERV1", // Simple transfers without payment
     "CREATEV1", // NFT creation/mint (not a sale in secondary market sense)
+    // NOTE: TRANSFERV1 removed - it might have SOL movement indicating a real sale
 ]);
 
 // Types that are LIKELY actual marketplace sales
@@ -471,15 +472,19 @@ const HIGH_CONFIDENCE_SALE_TYPES = new Set([
     "COMPRESSED_NFT_SALE",
     "EXECUTE_SALE",
     "BUY",
+    "COREBUY", // Mpl Core buy
     "CORESELL", // Mpl Core sell
 ]);
 
 // Types that MIGHT be sales if they have significant SOL movement
 const POTENTIAL_SALE_TYPES = new Set([
     "DEPOSIT", // Mpl Core purchases often show as deposit
+    "TRANSFERV1", // Might be a sale with SOL movement
+    "TRANSFER", // Might be a sale with SOL movement  
     "SWAP", // Some AMM sales
     "NFT_MINT", 
     "NFT_AUCTION_SETTLED",
+    "UNKNOWN", // Unknown types with SOL movement could be sales
 ]);
 
 // Types that are usually NOT sales even with SOL movement
@@ -593,8 +598,8 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
         }
 
         // 5. Determine tier based on transaction characteristics
-        const hasSignificantSol = totalSolMovement >= 0.05; // At least 0.05 SOL for a real sale
-        const hasLargeSol = totalSolMovement >= 0.5; // 0.5+ SOL is almost certainly a sale
+        const hasSignificantSol = totalSolMovement >= 0.03; // Lowered to 0.03 SOL to catch cheaper NFTs
+        const hasLargeSol = totalSolMovement >= 0.3; // Lowered to 0.3 SOL
         
         // Use SOL movement as price if we don't have event price
         if (price === 0 && totalSolMovement > 0) {
@@ -605,6 +610,11 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
         if (from === "Unknown" && sellerAddress) from = sellerAddress;
         if (to === "Unknown" && buyerAddress) to = buyerAddress;
 
+        // Log all transactions with any SOL movement for debugging
+        if (totalSolMovement > 0.01) {
+            console.log(`[extractLastSale] TX: type=${txType}, source=${source}, sol=${totalSolMovement.toFixed(4)}, from=${from?.substring(0,8)}..., to=${to?.substring(0,8)}...`);
+        }
+
         // Assign tier based on confidence
         if (isHighConfidenceType && price > 0) {
             tier = Math.max(tier, 5);
@@ -613,23 +623,27 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
             tier = Math.max(tier, 5);
         } else if (txType === "DEPOSIT" && hasSignificantSol) {
             tier = Math.max(tier, 4);
+        } else if ((txType === "TRANSFERV1" || txType === "TRANSFER") && hasSignificantSol) {
+            // Transfer with significant SOL could be a sale
+            tier = Math.max(tier, 3);
         } else if (isMarketplace && price > 0) {
             tier = Math.max(tier, 4);
         } else if (isPotentialSaleType && hasSignificantSol) {
             tier = Math.max(tier, 3);
         } else if (isLowConfidenceType) {
-            // collect, claim, etc. - only consider if VERY large amount
+            // collect, claim, etc. - only consider if large amount
             if (hasLargeSol) {
                 tier = 2; // Still low tier
             } else {
                 continue; // Skip small collect/claim transactions
             }
-        } else if (price > 0.05) {
-            tier = 2; // Unknown type but has SOL movement
+        } else if (price > 0.03) {
+            // Any transaction with decent SOL movement
+            tier = 2;
         }
 
         // Only add if we found a meaningful price and tier
-        if (price > 0.01 && tier >= 2) {
+        if (price > 0.005 && tier >= 2) { // Lowered from 0.01 to 0.005
             console.log(`[extractLastSale] Candidate: type=${txType}, source=${source}, price=${price.toFixed(4)} SOL, tier=${tier}, sig=${tx.signature?.substring(0, 8)}...`);
             candidates.push({
                 date: new Date((tx.timestamp || 0) * 1000).toISOString(),
@@ -650,18 +664,16 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
         return null;
     }
 
-    // Sort by tier (highest first), then by price (highest first for same tier)
-    // This ensures we pick the actual sale over small rewards/fees
+    // Sort by tier (highest first), then by TIMESTAMP (newest first)
+    // We want the LAST sale, not the biggest sale!
     candidates.sort((a, b) => {
         if (b.tier !== a.tier) return b.tier - a.tier;
-        // For same tier, prefer higher price (more likely to be actual sale)
-        if (Math.abs(b.price - a.price) > 0.1) return b.price - a.price;
-        // If prices are similar, prefer newer
+        // For same tier, prefer NEWEST (most recent transaction)
         return b.timestamp - a.timestamp;
     });
 
     const winner = candidates[0];
-    console.log(`[extractLastSale] Winner: type=${winner.type}, tier=${winner.tier}, price=${winner.price.toFixed(4)} SOL, sig=${winner.signature.substring(0, 8)}...`);
+    console.log(`[extractLastSale] Winner: type=${winner.type}, tier=${winner.tier}, price=${winner.price.toFixed(4)} SOL, date=${winner.date}, sig=${winner.signature.substring(0, 8)}...`);
 
     return {
         date: winner.date,
