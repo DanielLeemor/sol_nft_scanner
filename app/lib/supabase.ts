@@ -21,9 +21,12 @@ export interface AuditReport {
     id: string;
     wallet_address: string;
     report_json: NFTAuditData[] | { selected_mints?: string[]; selected_collections?: string[] };
-    status: "complete" | "partial" | "failed" | "processing";
+    status: "pending" | "queued" | "processing" | "partial" | "complete" | "failed";
     nft_count: number;
     pending_mints?: string[];
+    priority?: number;
+    queue_position?: number;
+    started_at?: string;
     created_at?: string;
 }
 
@@ -49,4 +52,12 @@ export interface NFTAuditData {
     last_tx_from: string;
     last_tx_to: string;
     last_tx_id: string;
+    // USD fields (new)
+    last_sale_usd?: number;           // Sale price in USD at time of sale
+    floor_price_usd?: number;         // Floor price in today's USD
+    profit_vs_floor_usd?: number;     // floor_price_usd - last_sale_usd
+    highest_trait_usd?: number;       // Highest trait price in today's USD
+    profit_vs_trait_usd?: number;     // (highest_trait_usd OR floor_price_usd) - last_sale_usd
+    sol_price_at_sale?: number;       // SOL price on sale date (for reference)
+    current_sol_price?: number;       // Current SOL price (for reference)
 }

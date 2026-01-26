@@ -1,4 +1,5 @@
 
+require('dotenv').config({ path: '.env.local' });
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY || "";
 // CryptoTitans #2199
 const MINT = "HvS8PjbPjtVG42DhyLekg7VbJbUteGvakpUK2zJVirwd";

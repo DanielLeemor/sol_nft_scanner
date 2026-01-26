@@ -40,9 +40,9 @@ export default function MyReportsPage() {
     // Auto-process loop
     useEffect(() => {
         const processNextBatch = async () => {
-            // Also pick up "partial" reports to trigger self-healing if they are stuck
+            // Pick up "processing", "partial", or "queued" reports
             const reportToProcess = reports.find(r =>
-                (r.status === "processing" || r.status === "partial") && !processingIds.has(r.id)
+                (r.status === "processing" || r.status === "partial" || r.status === "queued") && !processingIds.has(r.id)
             );
 
             if (!reportToProcess) return;
@@ -76,13 +76,15 @@ export default function MyReportsPage() {
             }
         };
 
-        // Trigger if any are processing OR partial (non-expired)
+        // Trigger if any are processing, partial (non-expired), OR queued
         const hasWork = reports.some(r =>
-            r.status === "processing" || (r.status === "partial" && !r.is_expired)
+            r.status === "processing" || r.status === "queued" || (r.status === "partial" && !r.is_expired)
         );
 
         if (hasWork) {
-            const timer = setTimeout(processNextBatch, 1000);
+            // Use longer interval for queued to avoid hammering the API
+            const interval = reports.some(r => r.status === "queued") ? 3000 : 1000;
+            const timer = setTimeout(processNextBatch, interval);
             return () => clearTimeout(timer);
         }
     }, [reports, processingIds]);
@@ -158,6 +160,8 @@ export default function MyReportsPage() {
                 return <span className="status-badge partial">Partial</span>;
             case "processing":
                 return <span className="status-badge processing">Processing...</span>;
+            case "queued":
+                return <span className="status-badge queued">Queued</span>;
             case "failed":
                 return <span className="status-badge failed">Failed</span>;
             default:
@@ -289,18 +293,30 @@ export default function MyReportsPage() {
                                             {report.is_expired ? (
                                                 <span className="expired-text">Report expired after 24 hours</span>
                                             ) : report.status === "complete" || (report.status === "partial" && processedCount > 0) ? (
-                                                <a
-                                                    href={`/api/download?id=${report.id}`}
-                                                    className="btn-download"
-                                                    download
-                                                >
-                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                                        <polyline points="7 10 12 15 17 10" />
-                                                        <line x1="12" y1="15" x2="12" y2="3" />
-                                                    </svg>
-                                                    Download CSV
-                                                </a>
+                                                <div className="report-actions">
+                                                    <Link
+                                                        href={`/reports/${report.id}`}
+                                                        className="btn-view"
+                                                    >
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                                            <circle cx="12" cy="12" r="3" />
+                                                        </svg>
+                                                        View Report
+                                                    </Link>
+                                                    <a
+                                                        href={`/api/download?id=${report.id}`}
+                                                        className="btn-download"
+                                                        download
+                                                    >
+                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                                            <polyline points="7 10 12 15 17 10" />
+                                                            <line x1="12" y1="15" x2="12" y2="3" />
+                                                        </svg>
+                                                        CSV
+                                                    </a>
+                                                </div>
                                             ) : (
                                                 <span className="pending-text">Processing your data...</span>
                                             )}
@@ -466,6 +482,11 @@ export default function MyReportsPage() {
                     background: rgba(153, 69, 255, 0.15);
                     color: var(--solana-purple);
                 }
+
+                .status-badge.queued {
+                    background: rgba(100, 149, 237, 0.15);
+                    color: #6495ED;
+                }
                 
                 .progress-container {
                     width: 100%;
@@ -507,7 +528,13 @@ export default function MyReportsPage() {
                     text-align: center;
                 }
 
-                .btn-download {
+                .report-actions {
+                    display: flex;
+                    gap: 12px;
+                    justify-content: center;
+                }
+
+                .btn-view {
                     display: inline-flex;
                     align-items: center;
                     gap: 8px;
@@ -520,9 +547,29 @@ export default function MyReportsPage() {
                     transition: all 0.3s ease;
                 }
 
-                .btn-download:hover {
+                .btn-view:hover {
                     transform: translateY(-2px);
                     box-shadow: 0 10px 30px rgba(153, 69, 255, 0.3);
+                }
+
+                .btn-download {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 12px 20px;
+                    background: rgba(255, 255, 255, 0.1);
+                    border: 1px solid rgba(255, 255, 255, 0.2);
+                    border-radius: 10px;
+                    color: white;
+                    font-weight: 600;
+                    text-decoration: none;
+                    transition: all 0.3s ease;
+                }
+
+                .btn-download:hover {
+                    background: rgba(255, 255, 255, 0.15);
+                    border-color: var(--solana-purple);
+                    transform: translateY(-2px);
                 }
 
                 .expired-text, .pending-text {
