@@ -241,6 +241,7 @@ export async function POST(request: NextRequest) {
                     selected_mints: data?.mints || [],
                     selected_collections: selectedCollections
                 },
+                pending_mints: selectedMints.length > 0 ? selectedMints : [], // Explicitly set pending mints
             })
             .select("id")
             .single();

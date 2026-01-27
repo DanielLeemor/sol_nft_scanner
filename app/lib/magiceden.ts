@@ -71,6 +71,22 @@ async function getCollectionSymbolFromMint(mintAddress: string): Promise<string 
 
         const response = await fetch(url, { headers });
 
+        if (response.status === 429) {
+            console.log(`[ME] Rate limited on mint lookup for ${mintAddress.substring(0, 8)}..., retrying...`);
+            await new Promise(r => setTimeout(r, 1500));
+            const retry = await fetch(url, { headers });
+            if (!retry.ok) {
+                mintToSymbolCache.set(mintAddress, null);
+                return null;
+            }
+            const data = await retry.json();
+            const symbol = data?.collection;
+            if (symbol) {
+                mintToSymbolCache.set(mintAddress, symbol);
+                return symbol;
+            }
+        }
+
         if (!response.ok) {
             console.log(`[ME] Token lookup failed for ${mintAddress.substring(0, 8)}...: ${response.status}`);
             mintToSymbolCache.set(mintAddress, null);
@@ -486,6 +502,9 @@ export async function getCollectionData(
 
         // Fetch floor price from Magic Eden
         const floorPrice = await getCollectionFloor(workingSymbol);
+
+
+
         console.log(`[ME] Floor price for ${workingSymbol}: ${floorPrice} SOL`);
 
         // Fetch listings for trait analysis
@@ -583,6 +602,14 @@ export async function getTokenDetails(
 
         const response = await fetch(url, { headers });
 
+        if (response.status === 429) {
+            console.warn(`[ME] Rate limited details for ${mintAddress}, retrying...`);
+            await new Promise(r => setTimeout(r, 1500));
+            const retry = await fetch(url, { headers });
+            if (!retry.ok) return null;
+            return await retry.json();
+        }
+
         if (!response.ok) {
             console.warn(`[ME] Error fetching token details: ${response.status}`);
             return null;
@@ -592,5 +619,45 @@ export async function getTokenDetails(
     } catch (error) {
         console.error(`[ME] Error getting token details:`, error);
         return null;
+    }
+}
+
+/**
+ * Fetch all tokens (wallet content + listed items) from Magic Eden API
+ * This finds items that are in escrow (listed) which Helius misses
+ */
+export async function fetchWalletTokensME(walletAddress: string): Promise<any[]> {
+    try {
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+        };
+        if (MAGIC_EDEN_API_KEY) {
+            headers["Authorization"] = `Bearer ${MAGIC_EDEN_API_KEY}`;
+        }
+
+        const url = `${MAGIC_EDEN_API_BASE}/wallets/${walletAddress}/tokens?offset=0&limit=500`;
+        console.log(`[ME] Fetching wallet tokens: ${url}`);
+
+        const response = await fetch(url, { headers });
+
+        if (response.status === 429) {
+            console.warn(`[ME] Rate limited fetching wallet tokens, retrying...`);
+            await new Promise(r => setTimeout(r, 1000));
+            const retry = await fetch(url, { headers });
+            if (!retry.ok) return [];
+            const retryData = await retry.json();
+            return Array.isArray(retryData) ? retryData : [];
+        }
+
+        if (!response.ok) {
+            console.warn(`[ME] Error fetching wallet tokens: ${response.status}`);
+            return [];
+        }
+
+        const tokens = await response.json();
+        return Array.isArray(tokens) ? tokens : [];
+    } catch (error) {
+        console.error(`[ME] Error fetching wallet tokens:`, error);
+        return [];
     }
 }

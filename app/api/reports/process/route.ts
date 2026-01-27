@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase, NFTAuditData } from "@/app/lib/supabase";
 import {
     getLastSaleForNFT,
-    fetchNFTMetadataBatch
+    fetchNFTMetadataBatch,
+    HeliusNFT
 } from "@/app/lib/helius";
 import {
     getCollectionData,
@@ -45,19 +46,21 @@ const CONFIG = {
 
     // Batch sizes per tier
     // REDUCED to prevent timeouts with the new deeper history scans
+    // Batch sizes per tier
+    // REDUCED to prevent timeouts with the new deeper history scans
     BATCH_SIZES: {
         free: 2,
-        developer: 3,
-        business: 15,
-        professional: 25
+        developer: 4,
+        business: 10,
+        professional: 20
     } as Record<string, number>,
 
     // Parallel processing within batch
     PARALLEL_SALES_LOOKUP: {
-        free: 2,      // Conservative for 2 req/s
-        developer: 8,  // Good for 10 req/s
-        business: 25,  // Good for 50 req/s
-        professional: 50
+        free: 1,      // Strictly sequential for free tier
+        developer: 2,  // Safe concurrency (avoiding rate limits & timeouts)
+        business: 5,
+        professional: 10
     } as Record<string, number>,
 
     // Delay between batches (ms) to avoid rate limits
@@ -268,8 +271,84 @@ export async function POST(request: NextRequest) {
         const batchMints = pendingMints.slice(0, batchSize);
         const remainingMints = pendingMints.slice(batchSize);
 
-        // 5. Fetch metadata in single batch call (very efficient - 1 API call for up to 100 NFTs)
-        const nftsMetadata = await fetchNFTMetadataBatch(batchMints);
+        // 5. Fetch metadata in single batch call
+        let nftsMetadata: HeliusNFT[] = [];
+        try {
+            nftsMetadata = await fetchNFTMetadataBatch(batchMints);
+        } catch (fetchErr) {
+            console.error(`[Process] Helius batch fetch failed, falling back to full ME recovery:`, fetchErr);
+            nftsMetadata = []; // Fallback will treat all as missing
+        }
+
+        // RECOVERY LOGIC: Check for missing NFTs (escrowed items Helius missed)
+        const foundIds = new Set(nftsMetadata.map(n => n.id));
+        const missingIds = batchMints.filter((id: string) => !foundIds.has(id));
+
+        if (missingIds.length > 0) {
+            console.log(`[Process] ${missingIds.length} NFTs missing from Helius batch, attempting ME recovery...`);
+
+            // Fetch missing items from Magic Eden sequentially to avoid rate limits
+            const recoveredItems = [];
+            for (const mintId of missingIds) {
+                try {
+                    // Small delay between calls
+                    await new Promise(r => setTimeout(r, 200));
+
+                    const token = await getTokenDetails(mintId);
+                    if (!token) {
+                        console.log(`[Process] Failed to recover ${mintId} (ME returned null)`);
+                        // Push Error Placeholder
+                        recoveredItems.push({
+                            id: mintId,
+                            content: {
+                                json_uri: "",
+                                metadata: {
+                                    name: "Failed to Load",
+                                    symbol: "ERR",
+                                    description: "Could not retrieve metadata",
+                                    attributes: []
+                                }
+                            },
+                            grouping: [],
+                            ownership: { owner: "" }
+                        });
+                        continue;
+                    }
+
+                    // Convert ME format to HeliusNFT format (Synthetic)
+                    recoveredItems.push({
+                        id: mintId,
+                        content: {
+                            json_uri: token.image,
+                            metadata: {
+                                name: token.name || "Unknown NFT",
+                                symbol: "",
+                                description: "Recovered via Magic Eden (Listed)",
+                                attributes: token.attributes || []
+                            }
+                        },
+                        grouping: [
+                            {
+                                group_key: "collection",
+                                group_value: token.collection || "Unknown",
+                                collection_metadata: {
+                                    name: token.collection || "Unknown Collection"
+                                }
+                            }
+                        ],
+                        ownership: {
+                            owner: "" // Unknown actual owner on-chain, effectively user
+                        }
+                    });
+                } catch (err) {
+                    console.error(`[Process] Recovery error for ${mintId}:`, err);
+                }
+            }
+
+            // Add valid recovered items to the list
+            nftsMetadata.push(...(recoveredItems as any[]));
+            console.log(`[Process] Successfully recovered ${recoveredItems.length} items from ME.`);
+        }
 
         const newAuditData: NFTAuditData[] = [];
         const collectionCache = new Map<string, CollectionCache>();
@@ -480,15 +559,20 @@ export async function POST(request: NextRequest) {
         }
 
         // 10. Update database
+        // SAFE COMMIT: Put back any mints from this batch that weren't processed (e.g. due to timeout break)
+        const processedIds = new Set(newAuditData.map(d => d.nft_id));
+        const skippedMints = batchMints.filter((id: string) => !processedIds.has(id));
+        const actualRemainingMints = [...skippedMints, ...remainingMints];
+
         const existingReportJson = Array.isArray(report.report_json) ? report.report_json : [];
         const updatedReportJson = [...existingReportJson, ...newAuditData];
-        const isFinished = remainingMints.length === 0;
+        const isFinished = actualRemainingMints.length === 0;
 
         const { error: updateError } = await supabase
             .from("audit_reports")
             .update({
                 report_json: updatedReportJson,
-                pending_mints: remainingMints,
+                pending_mints: actualRemainingMints,
                 status: isFinished ? "complete" : "processing"
             })
             .eq("id", reportId);

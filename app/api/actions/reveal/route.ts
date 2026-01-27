@@ -140,50 +140,83 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Fetch NFTs and generate audit report
-        const nfts = await fetchWalletNFTs(targetWallet);
-        const collections = groupNFTsByCollection(nfts);
+        // Initialize the report as 'processing'
+        // If finalReportId exists, check if pending_mints is already populated from the audit step.
+        let mintList: string[] = [];
 
-        // Filter NFTs based on selection mode
-        const selectedNfts: HeliusNFT[] = [];
+        // 4. Optimization: If we have an existing report with pending_mints, USE IT.
+        // Don't risk re-fetching and getting mismatched/empty results.
+        let preservePendingMints = false;
 
-        if (selectedMints.length > 0) {
-            // Granular mode: filter by specific mint IDs
-            const mintSet = new Set(selectedMints);
-            for (const collection of collections.values()) {
-                for (const nft of collection.nfts) {
-                    if (mintSet.has(nft.id)) {
-                        selectedNfts.push(nft);
-                    }
-                }
-            }
-        } else {
-            // Legacy mode: filter by collection IDs
-            const selectedCollectionIds = new Set(
-                selectedCollections.map((c) => parseCollectionValue(c).id)
-            );
-            for (const [collectionId, collection] of collections) {
-                if (selectedCollectionIds.has(collectionId)) {
-                    selectedNfts.push(...collection.nfts);
-                }
+        if (finalReportId) {
+            const { data: existingReport } = await supabase
+                .from("audit_reports")
+                .select("pending_mints, nft_count")
+                .eq("id", finalReportId)
+                .single();
+
+            if (existingReport && existingReport.pending_mints && (existingReport.pending_mints as any[]).length > 0) {
+                console.log(`[Reveal] Preserving ${existingReport.nft_count} pending mints from Audit step.`);
+                mintList = existingReport.pending_mints as string[];
+                preservePendingMints = true;
             }
         }
 
-        // Initialize the report as 'processing'
-        // We do NOT process the NFTs here to avoid timeouts.
-        const mintList = selectedNfts.map((n: HeliusNFT) => n.id);
+        // Only perform the expensive re-fetch/match if we DON'T have a valid list yet
+        if (!preservePendingMints) {
+            console.log("[Reveal] No existing pending mints found, performing fresh fetch...");
+            // Fetch NFTs and generate audit report
+            const nfts = await fetchWalletNFTs(targetWallet);
+            const collections = groupNFTsByCollection(nfts);
+
+            // Filter NFTs based on selection mode
+            const selectedNfts: HeliusNFT[] = [];
+
+            if (selectedMints.length > 0) {
+                // Granular mode: filter by specific mint IDs
+                const mintSet = new Set(selectedMints);
+                for (const collection of collections.values()) {
+                    for (const nft of collection.nfts) {
+                        if (mintSet.has(nft.id)) {
+                            selectedNfts.push(nft);
+                        }
+                    }
+                }
+            } else {
+                // Legacy mode: filter by collection IDs
+                const selectedCollectionIds = new Set(
+                    selectedCollections.map((c) => parseCollectionValue(c).id)
+                );
+                for (const [collectionId, collection] of collections) {
+                    if (selectedCollectionIds.has(collectionId)) {
+                        selectedNfts.push(...collection.nfts);
+                    }
+                }
+            }
+
+            mintList = selectedNfts.map((n: HeliusNFT) => n.id);
+        }
+
+        if (mintList.length === 0) {
+            console.warn("[Reveal] Warning: mintList is empty after processing. Report will be 0/0.");
+        }
 
         // UPSERT the report in Supabase
-        // If finalReportId exists, it updates the "partial" report from the audit step.
-        // Otherwise it creates a new one.
         const reportObj: Partial<AuditReport> & { id?: string } = {
             wallet_address: targetWallet,
-            report_json: [], // Start/reset empty
             status: "processing",
+            // IMPORTANT: Only overwrite pending_mints/nft_count if we calculated a NEW list.
+            // If we preserved, we technically wouldn't need to re-send, but sending matches DB state.
             pending_mints: mintList,
             nft_count: mintList.length,
             created_at: new Date().toISOString() // Refresh timestamp
         };
+
+        // If we preserved logic, ensure report_json isn't reset if it has progress? 
+        // Actually, Reveal usually resets report_json to [] to start fresh processing.
+        // But if we are retrying, we might want to keep progress?
+        // User wants "Fresh Report". So Resetting report_json to [] is correct for a NEW/REVEALED report.
+        reportObj.report_json = [];
 
         if (finalReportId) {
             reportObj.id = finalReportId;

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchWalletNFTs, groupNFTsByCollection } from "@/app/lib/helius";
-import { checkRateLimit, recordWalletScan } from "@/app/lib/rate-limit";
+import { fetchWalletNFTs, groupNFTsByCollection, HeliusNFT } from "@/app/lib/helius";
+import { fetchWalletTokensME } from "@/app/lib/magiceden";
+import { checkRateLimit } from "@/app/lib/rate-limit";
 import { calculatePrice, formatPrice } from "@/app/lib/pricing";
 import { isValidSolanaAddress } from "@/app/lib/utils";
 
@@ -30,11 +31,67 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        // Fetch NFTs
-        const nfts = await fetchWalletNFTs(wallet);
+        // Fetch NFTs from BOTH Helius (Wallet) and Magic Eden (Listed/Escrow)
+        // We run them in parallel for speed
+        console.log(`[Scan] Starting hybrid scan for ${wallet}`);
+        const [heliusNfts, meTokens] = await Promise.all([
+            fetchWalletNFTs(wallet).catch(err => {
+                console.error("[Scan] Helius fetch failed:", err);
+                return [];
+            }),
+            fetchWalletTokensME(wallet).catch(err => {
+                console.error("[Scan] ME fetch failed:", err);
+                return [];
+            })
+        ]);
 
-        // Record scan removed to prevent rate limiting on view
-        // await recordWalletScan(wallet);
+        console.log(`[Scan] Results: Helius=${heliusNfts.length}, ME=${meTokens.length}`);
+
+        // Merge and Deduplicate (Prioritize Helius as it has better metadata structure)
+        const nftMap = new Map<string, HeliusNFT>();
+
+        // 1. Add Helius NFTs
+        for (const nft of heliusNfts) {
+            nftMap.set(nft.id, nft);
+        }
+
+        // 2. Add ME Tokens if missing
+        for (const token of meTokens) {
+            if (!nftMap.has(token.mintAddress)) {
+                // Convert ME format to HeliusNFT format
+                // ME Token: { mintAddress, name, collection, listStatus, price, ... }
+                const converted: HeliusNFT = {
+                    id: token.mintAddress,
+                    content: {
+                        json_uri: token.image, // ME often provides image directly
+                        metadata: {
+                            name: token.name || "Unknown NFT",
+                            symbol: "", // ME doesn't always provide symbol here easily
+                            description: "Fetched via Magic Eden (Listed)",
+                            attributes: token.attributes || []
+                        }
+                    },
+                    grouping: [
+                        {
+                            group_key: "collection",
+                            // ME returns 'collection' as snake_case symbol usually
+                            group_value: token.collection || "Unknown",
+                            collection_metadata: {
+                                name: token.collectionName || token.collection || "Unknown Collection"
+                            }
+                        }
+                    ],
+                    ownership: {
+                        owner: wallet // In our logical view, the user owns it
+                    }
+                };
+
+                nftMap.set(token.mintAddress, converted);
+            }
+        }
+
+        const nfts = Array.from(nftMap.values());
+        console.log(`[Scan] Total unique NFTs: ${nfts.length}`);
 
         // Group
         const collections = groupNFTsByCollection(nfts);

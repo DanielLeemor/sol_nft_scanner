@@ -83,6 +83,8 @@ export async function fetchWalletNFTs(walletAddress: string): Promise<HeliusNFT[
     let page = 1;
     const limit = 1000;
 
+    // We use searchAssets as it's the most robust DAS method for finding all asset types
+    // including Compressed NFTs (cNFTs) and traditional token accounts.
     while (true) {
         const response = await fetch(HELIUS_RPC_URL, {
             method: "POST",
@@ -90,14 +92,14 @@ export async function fetchWalletNFTs(walletAddress: string): Promise<HeliusNFT[
             body: JSON.stringify({
                 jsonrpc: "2.0",
                 id: `scan-${page}`,
-                method: "getAssetsByOwner",
+                method: "searchAssets",
                 params: {
                     ownerAddress: walletAddress,
                     page,
                     limit,
                     displayOptions: {
                         showCollectionMetadata: true,
-                        showFungible: false,
+                        showNativeBalance: false,
                     },
                 },
             }),
@@ -113,13 +115,26 @@ export async function fetchWalletNFTs(walletAddress: string): Promise<HeliusNFT[
             throw new Error(`Helius API error: ${data.error.message}`);
         }
 
-        const items = data.result?.items || [];
-        allItems.push(...items);
+        const items: HeliusNFT[] = data.result?.items || [];
+
+        // Filter out fungible tokens (we only want NFTs and cNFTs)
+        const validNfts = items.filter((item: any) => {
+            const iface = item.interface || "";
+            // valid interfaces: "V1_NFT", "Legacy_NFT", "ProgrammableNFT", "MplCoreAsset"
+            // cNFTs usually appear as "V1_NFT" or specific compressed types
+            // Exclude "FungibleToken", "FungibleAsset"
+            return iface !== "FungibleToken" && iface !== "FungibleAsset";
+        });
+
+        allItems.push(...validNfts);
 
         // If we got fewer items than the limit, we've reached the end
         if (items.length < limit) {
             break;
         }
+
+        // Safety break for massive wallets (cap at 5000 nfts)
+        if (allItems.length > 5000) break;
 
         page++;
     }
