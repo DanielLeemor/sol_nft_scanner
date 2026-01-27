@@ -22,3 +22,10 @@
     Access-Control-Allow-Origin = "*"
     Access-Control-Allow-Methods = "GET, POST, PUT, OPTIONS"
     Access-Control-Allow-Headers = "Content-Type, Authorization, Accept-Encoding"
+
+[[headers]]
+  for = "/actions.json"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type, Authorization, Accept-Encoding"
