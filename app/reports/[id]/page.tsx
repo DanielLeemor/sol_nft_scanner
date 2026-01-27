@@ -28,6 +28,7 @@ interface NFTAuditData {
     last_tx_to: string;
     last_tx_id: string;
     current_sol_price?: number;
+    last_tx_fees_sol?: number;
 }
 
 interface ReportData {
@@ -38,8 +39,8 @@ interface ReportData {
     created_at: string;
 }
 
-type SortField = "nft_name" | "collection_name" | "floor_price_sol" | "floor_price_usd" | 
-                 "highest_trait_price_sol" | "last_tx_price_sol" | "profit_vs_floor_usd" | "profit_vs_trait_usd";
+type SortField = "nft_name" | "collection_name" | "floor_price_sol" | "floor_price_usd" |
+    "highest_trait_price_sol" | "last_tx_price_sol" | "profit_vs_floor_usd" | "profit_vs_trait_usd";
 type SortDirection = "asc" | "desc";
 
 export default function ReportViewerPage() {
@@ -57,13 +58,27 @@ export default function ReportViewerPage() {
     const [profitFilter, setProfitFilter] = useState<"all" | "profit" | "loss">("all");
     const [showOnlyRareTraits, setShowOnlyRareTraits] = useState(false);
 
+    // Column Customization
+    const [visibleColumns, setVisibleColumns] = useState({
+        floorSol: true,
+        floorUsd: true,
+        bought: true,
+        profitFloor: true,
+        bestTrait: true,
+        bestTraitUsd: false,
+        profitTrait: false,
+        fees: false,
+        heldTime: false
+    });
+    const [showColumnMenu, setShowColumnMenu] = useState(false);
+
     // Sorting
     const [sortField, setSortField] = useState<SortField>("profit_vs_floor_usd");
     const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
     // Pagination
     const [currentPage, setCurrentPage] = useState(1);
-    const itemsPerPage = 25;
+    const [itemsPerPage, setItemsPerPage] = useState(20);
 
     useEffect(() => {
         fetchReport();
@@ -100,7 +115,7 @@ export default function ReportViewerPage() {
         // Search filter
         if (searchQuery) {
             const query = searchQuery.toLowerCase();
-            data = data.filter(nft => 
+            data = data.filter(nft =>
                 nft.nft_name.toLowerCase().includes(query) ||
                 nft.collection_name.toLowerCase().includes(query) ||
                 nft.highest_trait_name.toLowerCase().includes(query)
@@ -128,12 +143,12 @@ export default function ReportViewerPage() {
         data.sort((a, b) => {
             let aVal = a[sortField] ?? 0;
             let bVal = b[sortField] ?? 0;
-            
+
             if (typeof aVal === "string") {
                 aVal = aVal.toLowerCase();
                 bVal = (bVal as string).toLowerCase();
             }
-            
+
             if (sortDirection === "asc") {
                 return aVal > bVal ? 1 : -1;
             } else {
@@ -154,12 +169,12 @@ export default function ReportViewerPage() {
     // Summary stats
     const summaryStats = useMemo(() => {
         if (!filteredData.length) return null;
-        
+
         const totalFloorUsd = filteredData.reduce((sum, nft) => sum + (nft.floor_price_usd || 0), 0);
         const totalProfitLoss = filteredData.reduce((sum, nft) => sum + (nft.profit_vs_floor_usd || 0), 0);
         const profitableCount = filteredData.filter(nft => (nft.profit_vs_floor_usd || 0) > 0).length;
         const rareTraitsCount = filteredData.filter(nft => nft.highest_trait_price_sol > nft.floor_price_sol).length;
-        
+
         return {
             totalNfts: filteredData.length,
             totalFloorUsd,
@@ -227,7 +242,7 @@ export default function ReportViewerPage() {
     return (
         <>
             <div className="bg-gradient" />
-            
+
             {/* Navigation */}
             <nav className="navbar">
                 <div className="container">
@@ -254,8 +269,8 @@ export default function ReportViewerPage() {
                             </p>
                         </div>
                         <div className="header-right">
-                            <a 
-                                href={`/api/download?id=${reportId}`} 
+                            <a
+                                href={`/api/download?id=${reportId}`}
                                 className="btn-secondary"
                             >
                                 📥 Download CSV
@@ -300,9 +315,9 @@ export default function ReportViewerPage() {
                                 className="search-input"
                             />
                         </div>
-                        
+
                         <div className="filter-group">
-                            <select 
+                            <select
                                 value={selectedCollection}
                                 onChange={(e) => { setSelectedCollection(e.target.value); setCurrentPage(1); }}
                                 className="filter-select"
@@ -336,6 +351,29 @@ export default function ReportViewerPage() {
                                 <span>Rare Traits Only</span>
                             </label>
                         </div>
+
+                        <div className="filter-group relative">
+                            <button
+                                className="filter-select flex items-center justify-between"
+                                onClick={() => setShowColumnMenu(!showColumnMenu)}
+                            >
+                                <span>Customize Columns</span>
+                                <span>▼</span>
+                            </button>
+                            {showColumnMenu && (
+                                <div className="column-menu">
+                                    <label><input type="checkbox" checked={visibleColumns.floorSol} onChange={e => setVisibleColumns({ ...visibleColumns, floorSol: e.target.checked })} /> Floor (SOL)</label>
+                                    <label><input type="checkbox" checked={visibleColumns.floorUsd} onChange={e => setVisibleColumns({ ...visibleColumns, floorUsd: e.target.checked })} /> Floor (USD)</label>
+                                    <label><input type="checkbox" checked={visibleColumns.bought} onChange={e => setVisibleColumns({ ...visibleColumns, bought: e.target.checked })} /> Bought Price</label>
+                                    <label><input type="checkbox" checked={visibleColumns.fees} onChange={e => setVisibleColumns({ ...visibleColumns, fees: e.target.checked })} /> Fees Paid</label>
+                                    <label><input type="checkbox" checked={visibleColumns.heldTime} onChange={e => setVisibleColumns({ ...visibleColumns, heldTime: e.target.checked })} /> Time Held</label>
+                                    <label><input type="checkbox" checked={visibleColumns.profitFloor} onChange={e => setVisibleColumns({ ...visibleColumns, profitFloor: e.target.checked })} /> P/L (Floor)</label>
+                                    <label><input type="checkbox" checked={visibleColumns.bestTrait} onChange={e => setVisibleColumns({ ...visibleColumns, bestTrait: e.target.checked })} /> Best Trait</label>
+                                    <label><input type="checkbox" checked={visibleColumns.bestTraitUsd} onChange={e => setVisibleColumns({ ...visibleColumns, bestTraitUsd: e.target.checked })} /> Best Trait ($)</label>
+                                    <label><input type="checkbox" checked={visibleColumns.profitTrait} onChange={e => setVisibleColumns({ ...visibleColumns, profitTrait: e.target.checked })} /> P/L (Trait)</label>
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* Results count */}
@@ -345,7 +383,7 @@ export default function ReportViewerPage() {
 
                     {/* Mobile Sort Dropdown */}
                     <div className="mobile-sort">
-                        <select 
+                        <select
                             value={`${sortField}-${sortDirection}`}
                             onChange={(e) => {
                                 const [field, dir] = e.target.value.split("-");
@@ -369,7 +407,7 @@ export default function ReportViewerPage() {
                         {paginatedData.map((nft, idx) => {
                             const profitLoss = nft.profit_vs_floor_usd || 0;
                             const hasRareTrait = nft.highest_trait_price_sol > nft.floor_price_sol;
-                            
+
                             return (
                                 <div key={`mobile-${nft.nft_id}-${idx}`} className={`nft-card ${hasRareTrait ? "has-rare" : ""}`}>
                                     <div className="nft-card-header">
@@ -381,7 +419,7 @@ export default function ReportViewerPage() {
                                             {nft.last_tx_price_sol > 0 ? formatUsd(profitLoss) : "-"}
                                         </div>
                                     </div>
-                                    
+
                                     <div className="nft-card-stats">
                                         <div className="nft-card-stat">
                                             <span className="stat-label">Floor</span>
@@ -405,9 +443,9 @@ export default function ReportViewerPage() {
                                             </div>
                                         )}
                                     </div>
-                                    
+
                                     <div className="nft-card-actions">
-                                        <a 
+                                        <a
                                             href={`https://magiceden.io/item-details/${nft.nft_id}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -415,7 +453,7 @@ export default function ReportViewerPage() {
                                         >
                                             Magic Eden
                                         </a>
-                                        <a 
+                                        <a
                                             href={`https://tensor.trade/item/${nft.nft_id}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -440,21 +478,43 @@ export default function ReportViewerPage() {
                                     <th onClick={() => handleSort("collection_name")} className="sortable">
                                         Collection {getSortIcon("collection_name")}
                                     </th>
-                                    <th onClick={() => handleSort("floor_price_sol")} className="sortable">
-                                        Floor (SOL) {getSortIcon("floor_price_sol")}
-                                    </th>
-                                    <th onClick={() => handleSort("floor_price_usd")} className="sortable">
-                                        Floor (USD) {getSortIcon("floor_price_usd")}
-                                    </th>
-                                    <th onClick={() => handleSort("last_tx_price_sol")} className="sortable">
-                                        Bought (SOL) {getSortIcon("last_tx_price_sol")}
-                                    </th>
-                                    <th onClick={() => handleSort("profit_vs_floor_usd")} className="sortable">
-                                        P/L (USD) {getSortIcon("profit_vs_floor_usd")}
-                                    </th>
-                                    <th onClick={() => handleSort("highest_trait_price_sol")} className="sortable">
-                                        Best Trait {getSortIcon("highest_trait_price_sol")}
-                                    </th>
+                                    {visibleColumns.floorSol && (
+                                        <th onClick={() => handleSort("floor_price_sol")} className="sortable">
+                                            Floor (SOL) {getSortIcon("floor_price_sol")}
+                                        </th>
+                                    )}
+                                    {visibleColumns.floorUsd && (
+                                        <th onClick={() => handleSort("floor_price_usd")} className="sortable">
+                                            Floor (USD) {getSortIcon("floor_price_usd")}
+                                        </th>
+                                    )}
+                                    {visibleColumns.bought && (
+                                        <th onClick={() => handleSort("last_tx_price_sol")} className="sortable">
+                                            Bought (SOL) {getSortIcon("last_tx_price_sol")}
+                                        </th>
+                                    )}
+                                    {visibleColumns.fees && <th>Fees (SOL)</th>}
+                                    {visibleColumns.heldTime && <th>Time Held</th>}
+                                    {visibleColumns.profitFloor && (
+                                        <th onClick={() => handleSort("profit_vs_floor_usd")} className="sortable">
+                                            P/L (USD) {getSortIcon("profit_vs_floor_usd")}
+                                        </th>
+                                    )}
+                                    {visibleColumns.bestTrait && (
+                                        <th onClick={() => handleSort("highest_trait_price_sol")} className="sortable">
+                                            Best Trait {getSortIcon("highest_trait_price_sol")}
+                                        </th>
+                                    )}
+                                    {visibleColumns.bestTraitUsd && (
+                                        <th onClick={() => handleSort("highest_trait_usd" as any)} className="sortable">
+                                            Trait ($)
+                                        </th>
+                                    )}
+                                    {visibleColumns.profitTrait && (
+                                        <th onClick={() => handleSort("profit_vs_trait_usd")} className="sortable">
+                                            P/L (Trait)
+                                        </th>
+                                    )}
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -462,7 +522,7 @@ export default function ReportViewerPage() {
                                 {paginatedData.map((nft, idx) => {
                                     const profitLoss = nft.profit_vs_floor_usd || 0;
                                     const hasRareTrait = nft.highest_trait_price_sol > nft.floor_price_sol;
-                                    
+
                                     return (
                                         <tr key={`${nft.nft_id}-${idx}`} className={hasRareTrait ? "rare-trait-row" : ""}>
                                             <td>
@@ -471,36 +531,65 @@ export default function ReportViewerPage() {
                                             <td>
                                                 <div className="collection-name">{nft.collection_name}</div>
                                             </td>
-                                            <td>{formatSol(nft.floor_price_sol)}</td>
-                                            <td>{formatUsd(nft.floor_price_usd)}</td>
-                                            <td>
-                                                {nft.last_tx_price_sol > 0 ? (
-                                                    <div>
-                                                        <div>{formatSol(nft.last_tx_price_sol)}</div>
-                                                        <div className="sub-text">{formatUsd(nft.last_sale_usd)}</div>
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-muted">No sale data</span>
-                                                )}
-                                            </td>
-                                            <td>
-                                                <span className={`profit-cell ${profitLoss > 0 ? 'positive' : profitLoss < 0 ? 'negative' : ''}`}>
-                                                    {nft.last_tx_price_sol > 0 ? formatUsd(profitLoss) : "-"}
-                                                </span>
-                                            </td>
-                                            <td>
-                                                {hasRareTrait ? (
-                                                    <div className="trait-info">
-                                                        <div className="trait-price">{formatSol(nft.highest_trait_price_sol)}</div>
-                                                        <div className="trait-name">{nft.highest_trait_name}</div>
-                                                    </div>
-                                                ) : (
-                                                    <span className="text-muted">Floor</span>
-                                                )}
-                                            </td>
+                                            {visibleColumns.floorSol && <td>{formatSol(nft.floor_price_sol)}</td>}
+                                            {visibleColumns.floorUsd && <td>{formatUsd(nft.floor_price_usd)}</td>}
+                                            {visibleColumns.bought && (
+                                                <td>
+                                                    {nft.last_tx_price_sol > 0 ? (
+                                                        <div>
+                                                            <a href={`https://solscan.io/tx/${nft.last_tx_id}`} target="_blank" rel="noopener noreferrer" className="tx-link">
+                                                                {formatSol(nft.last_tx_price_sol)} ↗
+                                                            </a>
+                                                            <div className="sub-text">{formatUsd(nft.last_sale_usd)}</div>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-muted">No sale data</span>
+                                                    )}
+                                                </td>
+                                            )}
+                                            {visibleColumns.fees && (
+                                                <td>{nft.last_tx_fees_sol ? formatSol(nft.last_tx_fees_sol) : "-"}</td>
+                                            )}
+                                            {visibleColumns.heldTime && (
+                                                <td>
+                                                    {nft.last_tx_date ? (() => {
+                                                        const days = Math.floor((new Date().getTime() - new Date(nft.last_tx_date).getTime()) / (1000 * 60 * 60 * 24));
+                                                        return days > 0 ? `${days} days` : "Just now";
+                                                    })() : "-"}
+                                                </td>
+                                            )}
+                                            {visibleColumns.profitFloor && (
+                                                <td>
+                                                    <span className={`profit-cell ${profitLoss > 0 ? 'positive' : profitLoss < 0 ? 'negative' : ''}`}>
+                                                        {nft.last_tx_price_sol > 0 ? formatUsd(profitLoss) : "-"}
+                                                    </span>
+                                                </td>
+                                            )}
+                                            {visibleColumns.bestTrait && (
+                                                <td>
+                                                    {hasRareTrait ? (
+                                                        <div className="trait-info">
+                                                            <div className="trait-price">{formatSol(nft.highest_trait_price_sol)}</div>
+                                                            <div className="trait-name">{nft.highest_trait_name}</div>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-muted">Floor</span>
+                                                    )}
+                                                </td>
+                                            )}
+                                            {visibleColumns.bestTraitUsd && (
+                                                <td>{hasRareTrait ? formatUsd(nft.highest_trait_usd) : "-"}</td>
+                                            )}
+                                            {visibleColumns.profitTrait && (
+                                                <td>
+                                                    <span className={`profit-cell ${(nft.profit_vs_trait_usd || 0) > 0 ? 'positive' : (nft.profit_vs_trait_usd || 0) < 0 ? 'negative' : ''}`}>
+                                                        {formatUsd(nft.profit_vs_trait_usd)}
+                                                    </span>
+                                                </td>
+                                            )}
                                             <td>
                                                 <div className="action-buttons">
-                                                    <a 
+                                                    <a
                                                         href={`https://magiceden.io/item-details/${nft.nft_id}`}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
@@ -509,7 +598,7 @@ export default function ReportViewerPage() {
                                                     >
                                                         ME
                                                     </a>
-                                                    <a 
+                                                    <a
                                                         href={`https://tensor.trade/item/${nft.nft_id}`}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
@@ -528,25 +617,43 @@ export default function ReportViewerPage() {
                     </div>
 
                     {/* Pagination */}
-                    {totalPages > 1 && (
-                        <div className="pagination">
-                            <button 
-                                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                                disabled={currentPage === 1}
-                                className="page-btn"
-                            >
-                                Previous
-                            </button>
-                            <span className="page-info">
-                                Page {currentPage} of {totalPages}
-                            </span>
-                            <button 
-                                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                                disabled={currentPage === totalPages}
-                                className="page-btn"
-                            >
-                                Next
-                            </button>
+                    {totalPages >= 1 && (
+                        <div className="pagination-container">
+                            <div className="items-per-page">
+                                <span>Show:</span>
+                                <select
+                                    value={itemsPerPage}
+                                    onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                                    className="per-page-select"
+                                >
+                                    <option value={20}>20</option>
+                                    <option value={50}>50</option>
+                                    <option value={100}>100</option>
+                                    <option value={500}>All</option>
+                                </select>
+                            </div>
+
+                            {totalPages > 1 && (
+                                <div className="pagination">
+                                    <button
+                                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                        disabled={currentPage === 1}
+                                        className="page-btn"
+                                    >
+                                        Previous
+                                    </button>
+                                    <span className="page-info">
+                                        Page {currentPage} of {totalPages}
+                                    </span>
+                                    <button
+                                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                        disabled={currentPage === totalPages}
+                                        className="page-btn"
+                                    >
+                                        Next
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -781,11 +888,22 @@ const styles = `
         background: var(--bg-card);
         border-radius: 16px;
         border: 1px solid rgba(255, 255, 255, 0.1);
+        max-height: 800px; /* Limit height to force scroll if too long */
+        overflow-y: auto;
     }
 
     .data-table {
         width: 100%;
         border-collapse: collapse;
+        position: relative;
+    }
+    
+    .data-table thead {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: var(--bg-card); /* Opaque background to hide scrolling content */
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     }
 
     .data-table th {
@@ -798,6 +916,50 @@ const styles = `
         text-transform: uppercase;
         letter-spacing: 0.5px;
         white-space: nowrap;
+        cursor: pointer;
+    }
+
+    .relative { position: relative; }
+    .flex { display: flex; }
+    .items-center { align-items: center; }
+    .justify-between { justify-content: space-between; }
+
+    .column-menu {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: var(--bg-card);
+        border: 1px solid var(--solana-purple);
+        border-radius: 8px;
+        padding: 12px;
+        z-index: 100;
+        margin-top: 4px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+
+    .column-menu label {
+        display: block;
+        padding: 6px 0;
+        color: white;
+        font-size: 0.9rem;
+        cursor: pointer;
+    }
+    
+    .column-menu input {
+        margin-right: 8px;
+        accent-color: var(--solana-purple);
+    }
+
+    .tx-link {
+        color: var(--solana-green);
+        text-decoration: none;
+        font-weight: 500;
+    }
+
+    .tx-link:hover {
+        text-decoration: underline;
+    }
     }
 
     .data-table th.sortable {
@@ -893,13 +1055,43 @@ const styles = `
         background: var(--solana-purple);
     }
 
+    .pagination-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 24px;
+        flex-wrap: wrap;
+        gap: 16px;
+        padding: 0 20px;
+    }
+
+    .items-per-page {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-muted);
+        font-size: 0.9rem;
+    }
+
+    .per-page-select {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: white;
+        padding: 4px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+
+    .per-page-select option {
+        background-color: #1a1a2e; /* Hardcoded dark background for browser consistency */
+        color: white;
+    }
+
     .pagination {
         display: flex;
-        justify-content: center;
+        justify-content: flex-end;
         align-items: center;
         gap: 16px;
-        margin-top: 24px;
-        padding: 20px;
     }
 
     .page-btn {
