@@ -7,6 +7,7 @@ import {
 import {
     getCollectionData,
     analyzeNftTraits,
+    getTokenDetails
 } from "@/app/lib/magiceden";
 import {
     getCurrentSolPrice,
@@ -397,7 +398,22 @@ export async function POST(request: NextRequest) {
             let highestTraitName = "None";
 
             // Analyze traits
-            const nftAttributes = nft.content?.metadata?.attributes;
+            let nftAttributes = nft.content?.metadata?.attributes;
+
+            // FALLBACK: If Helius has no attributes, try fetching from Magic Eden
+            if ((!nftAttributes || nftAttributes.length === 0) && cachedData?.traitFloors && cachedData.traitFloors.size > 0) {
+                console.log(`[Process] No attributes for ${nftName}, attempting ME fallback...`);
+                try {
+                    const meTokenData = await getTokenDetails(nftId);
+                    if (meTokenData && meTokenData.attributes && meTokenData.attributes.length > 0) {
+                        console.log(`[Process] ✅ Recovered ${meTokenData.attributes.length} attributes from ME for ${nftName}`);
+                        nftAttributes = meTokenData.attributes;
+                    }
+                } catch (fallbackErr) {
+                    console.error(`[Process] ME fallback failed for ${nftName}:`, fallbackErr);
+                }
+            }
+
             if (nftAttributes && cachedData?.traitFloors && cachedData.traitFloors.size > 0) {
                 const traitAnalysis = analyzeNftTraits(nftAttributes, cachedData.traitFloors);
                 zeroCount = traitAnalysis.zeroCount;

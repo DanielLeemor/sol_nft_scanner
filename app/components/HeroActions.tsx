@@ -78,7 +78,7 @@ export default function HeroActions() {
     }, [selectedNftIds]);
 
     const [targetWalletInput, setTargetWalletInput] = useState("");
-    
+
     // Treasury wallet for admin detection - use env var with fallback
     const TREASURY_WALLET = process.env.NEXT_PUBLIC_TREASURY_WALLET || "5mwMWEiidJ38XSnDeZawXP9Hfd4AE1qwUcZaqpDTPEFp";
     const isAdmin = publicKey?.toBase58() === TREASURY_WALLET;
@@ -89,7 +89,7 @@ export default function HeroActions() {
         setLoading(true);
         setError(null);
 
-        const walletToScan = (isAdmin && targetWalletInput) ? targetWalletInput : publicKey.toBase58();
+        const walletToScan = targetWalletInput.trim() ? targetWalletInput.trim() : publicKey.toBase58();
 
         try {
             const res = await fetch(`/api/scan?wallet=${walletToScan}`);
@@ -171,7 +171,7 @@ export default function HeroActions() {
 
             // Send selected mints
             const selectedMints = Array.from(selectedNftIds);
-            const walletToScan = (isAdmin && targetWalletInput) ? targetWalletInput : publicKey.toBase58();
+            const walletToScan = targetWalletInput.trim() ? targetWalletInput.trim() : publicKey.toBase58();
 
             const res = await fetch(`/api/actions/audit?wallet=${walletToScan}`, {
                 method: "POST",
@@ -312,11 +312,11 @@ export default function HeroActions() {
         <div className="flex flex-col items-start gap-6 w-full max-w-xl">
             {!scanResult ? (
                 <div className="w-full space-y-4">
-                    {isAdmin && (
-                        <div className="w-full animate-in fade-in slide-in-from-top-2">
-                            <label className="text-xs font-semibold text-[var(--solana-green)] uppercase tracking-wider mb-2 block">
-                                Admin Mode: Target Wallet
-                            </label>
+                    <div className="w-full animate-in fade-in slide-in-from-top-2">
+                        <label className="text-xs font-semibold text-[var(--solana-green)] uppercase tracking-wider mb-2 block">
+                            Target Wallet (Optional)
+                        </label>
+                        <div className="relative">
                             <input
                                 type="text"
                                 value={targetWalletInput}
@@ -324,14 +324,25 @@ export default function HeroActions() {
                                 placeholder="Enter wallet address to audit..."
                                 className="w-full bg-[var(--bg-card)] border border-[var(--solana-green)]/50 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-[var(--solana-green)]"
                             />
+                            {targetWalletInput && (
+                                <button
+                                    onClick={() => setTargetWalletInput('')}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                                >
+                                    ✕
+                                </button>
+                            )}
                         </div>
-                    )}
+                        <p className="text-[10px] text-[var(--text-secondary)] mt-1 ml-1">
+                            Leave empty to audit your connected wallet
+                        </p>
+                    </div>
                     <button
                         onClick={handleScan}
                         disabled={loading}
                         className="btn-primary w-full justify-center"
                     >
-                        {loading ? "Scanning Wallet..." : (isAdmin && targetWalletInput ? "Audit Target Wallet" : "Audit My Portfolio")}
+                        {loading ? "Scanning Wallet..." : (targetWalletInput ? "Audit Target Wallet" : "Audit My Portfolio")}
                     </button>
                 </div>
             ) : (

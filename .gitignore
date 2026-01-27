@@ -46,6 +46,7 @@ next-env.d.ts
 !package-lock.json
 !tsconfig.json
 !next.config.json
+!public/actions.json
 
 # logs
 *.log

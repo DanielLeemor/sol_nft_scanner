@@ -234,6 +234,7 @@ export async function POST(request: NextRequest) {
             .from("audit_reports")
             .insert({
                 wallet_address: targetWallet,
+                created_by_wallet: account, // Store the payer/requestor
                 status: "partial",
                 nft_count: totalNfts,
                 report_json: {

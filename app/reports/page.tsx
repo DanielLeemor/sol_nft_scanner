@@ -257,6 +257,9 @@ export default function MyReportsPage() {
                                         <div className="report-card-header">
                                             <div className="status-container">
                                                 {getStatusBadge(report.status, report.is_expired)}
+                                                <span className="text-xs font-mono text-[var(--solana-green)] bg-[var(--solana-green)]/10 px-2 py-1 rounded">
+                                                    Wallet: {report.wallet_address.substring(0, 4)}...{report.wallet_address.substring(report.wallet_address.length - 4)}
+                                                </span>
                                                 <span className="report-date">{formatDate(report.created_at)}</span>
                                             </div>
 

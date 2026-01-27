@@ -26,10 +26,13 @@ export async function GET(request: NextRequest) {
             .order("created_at", { ascending: false })
             .limit(50);
 
-        // Standard user: see only their own reports
-        // Admin: see everything (so client-side processing can resume for target wallets)
+        // Standard user: see reports they PAID for (created_by_wallet)
+        // OR reports where they are the target (fallback for old reports)
         if (wallet !== TREASURY_WALLET) {
-            query = query.eq("wallet_address", wallet);
+            // Using .or() to handle both cases:
+            // 1. created_by_wallet matches user
+            // 2. created_by_wallet is null AND wallet_address matches user (legacy)
+            query = query.or(`created_by_wallet.eq.${wallet},and(created_by_wallet.is.null,wallet_address.eq.${wallet})`);
         }
 
         const { data: reports, error } = await query;

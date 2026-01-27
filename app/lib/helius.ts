@@ -618,15 +618,36 @@ export function extractLastSale(transactions: HeliusTransaction[], targetMint: s
 
             // Calculate fees: sum of all transfers minus the largest (main sale price)
             // Fees are typically: marketplace fee, royalties, etc.
-            if (solTransfers.length > 1) {
-                const sortedTransfers = [...solTransfers].sort((a, b) => b - a);
-                const mainSale = sortedTransfers[0];
-                const otherTransfers = sortedTransfers.slice(1);
-                totalFees = otherTransfers.reduce((sum, t) => sum + t, 0);
+            // Calculate fees: sum of all OTHER transfers FROM the buyer
+            // This excludes the main sale transfer itself
+            // Also excludes unrelated transfers (like seller moving funds out)
+            if (solTransfers.length > 1 && buyerAddress) {
+                // Find all transfers from the buyer
+                const buyerTransfers = tx.nativeTransfers.filter(t =>
+                    t.fromUserAccount === buyerAddress &&
+                    (t.amount || 0) / 1e9 > 0.0001
+                );
 
-                // Only count as fees if they're a reasonable percentage of sale (< 20%)
-                if (totalFees > mainSale * 0.2) {
-                    totalFees = 0; // Probably not fees, could be multiple sales or other
+                // Calculate total outgoing from buyer
+                const totalBuyerOutgoing = buyerTransfers.reduce((sum, t) => sum + ((t.amount || 0) / 1e9), 0);
+
+                // Fees = Total Outgoing - Main Sale Price (totalSolMovement)
+                // We assume totalSolMovement is the price component
+                const calculatedFees = totalBuyerOutgoing - totalSolMovement;
+
+                // Sanity check: Fees should be positive and reasonable (< 30% of price)
+                if (calculatedFees > 0 && calculatedFees < totalSolMovement * 0.3) {
+                    totalFees = calculatedFees;
+                } else if (calculatedFees < 0) {
+                    // This shouldn't happen if totalSolMovement was found correctly from the buyer's transfers
+                    // But if totalSolMovement came from a different logic branch, we might fallback
+                    const sortedTransfers = solTransfers.sort((a, b) => b - a);
+                    const mainSale = sortedTransfers[0];
+                    const otherTransfers = sortedTransfers.slice(1);
+                    const fallbackFees = otherTransfers.reduce((sum, t) => sum + t, 0);
+                    if (fallbackFees < mainSale * 0.2) {
+                        totalFees = fallbackFees;
+                    }
                 }
             }
         }
