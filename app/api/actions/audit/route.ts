@@ -210,7 +210,7 @@ export async function POST(request: NextRequest) {
         }
 
         // ============================================================
-        // STEP 1: Wallet input received - fetch NFTs and offer SAMPLE AUDIT
+        // STEP 1: Wallet input received - RETURN INSTANT ACTION (No Fetch)
         // ============================================================
         if (!step || step !== "pay") {
             // Get wallet from data (user input) or URL param
@@ -223,53 +223,21 @@ export async function POST(request: NextRequest) {
                 );
             }
 
-            // Check rate limit
-            const rateLimit = await checkRateLimit(inputWallet);
-            if (!rateLimit.allowed) {
-                return NextResponse.json(
-                    {
-                        type: "action",
-                        icon: `${APP_URL}/icon.png`,
-                        title: "Rate Limited",
-                        description: `Please wait ${rateLimit.waitMinutes} minutes before scanning again.`,
-                        label: "Wait",
-                        disabled: true,
-                    },
-                    { headers: ACTIONS_CORS_HEADERS }
-                );
-            }
+            // Skip Rate Limit Check here (super fast response needed)
+            // We checks rate limit before generating the transaction in Step 2
 
-            // Fetch NFTs from wallet
-            const nfts = await fetchWalletNFTs(inputWallet);
-
-            if (!nfts || nfts.length === 0) {
-                return NextResponse.json(
-                    {
-                        type: "action",
-                        icon: `${APP_URL}/icon.png`,
-                        title: "No NFTs Found",
-                        description:
-                            "This wallet doesn't contain any NFTs. Try a different wallet address.",
-                        label: "No NFTs",
-                        disabled: true,
-                    },
-                    { headers: ACTIONS_CORS_HEADERS }
-                );
-            }
-
-            const totalNfts = nfts.length;
             // Sample Size: 20
             const SAMPLE_SIZE = 20;
             const estimatedPrice = calculatePrice(SAMPLE_SIZE); // Base price for sample
 
-            // Return "Sample Audit" action (No Dropdown - fixes 10KB limit)
+            // Return "Sample Audit" action INSTANTLY
             return NextResponse.json(
                 {
                     type: "action",
                     icon: `${APP_URL}/icon.png`,
                     title: "SolNFTscanner Audit",
-                    description: `Found ${totalNfts} NFTs. This Blink provides a sample audit of ${SAMPLE_SIZE} items. For a full portfolio audit, visit SolNFTscanner.com.`,
-                    label: `Audit Sample (${SAMPLE_SIZE} NFTs)`,
+                    description: `Audit a sample of your portfolio (${SAMPLE_SIZE} NFTs). Full detailed report available on SolNFTscanner.com after scan.`,
+                    label: `Audit Sample`,
                     links: {
                         actions: [
                             {
