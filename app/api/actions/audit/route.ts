@@ -45,12 +45,12 @@ export async function GET(request: NextRequest) {
                     links: {
                         actions: [
                             {
-                                type: "post",
+                                type: "transaction",
                                 label: "Scan My Wallet",
                                 href: `/api/actions/audit`,
                             },
                             {
-                                type: "post",
+                                type: "transaction",
                                 label: "Scan Other Wallet",
                                 href: `/api/actions/audit`,
                                 parameters: [

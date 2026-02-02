@@ -5,7 +5,7 @@ export const ACTIONS_CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Accept-Encoding",
   "Access-Control-Expose-Headers": "X-Action-Version, X-Blockchain-Ids",
   "Content-Type": "application/json",
-  "X-Action-Version": "2.1.3",
+  "X-Action-Version": "2.0",
   "X-Blockchain-Ids": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
 };
 
