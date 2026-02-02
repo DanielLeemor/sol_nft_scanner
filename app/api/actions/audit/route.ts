@@ -125,10 +125,10 @@ export async function GET(request: NextRequest) {
         // Group NFTs by collection
         const collections = groupNFTsByCollection(nfts);
 
-        // Build select options - Limit to Top 10 to avoid 10KB JSON limit
+        // Build select options - Limit to Top 5 to ensure << 10KB JSON limit
         const options = Array.from(collections.values())
             .sort((a, b) => b.count - a.count)
-            .slice(0, 10) // STRICT LIMIT for Blinks
+            .slice(0, 5) // STRICT LIMIT (User request: fetch fewer, prompt for website)
             .map((collection) => ({
                 label: `${collection.name} (${collection.count} NFTs)`,
                 value: `${collection.id}:${collection.count}`,
@@ -138,12 +138,13 @@ export async function GET(request: NextRequest) {
         const totalNfts = nfts.length;
         const estimatedPrice = calculatePrice(totalNfts);
 
+        // Return collection selection action
         return NextResponse.json(
             {
                 type: "action",
                 icon: `${APP_URL}/icon.png`,
                 title: "SolNFTscanner Audit",
-                description: `Found ${totalNfts} NFTs across ${collections.size} collections. Select collections to audit. Estimated price: ${formatPrice(estimatedPrice)}`,
+                description: `Found ${collections.size} collections (${totalNfts} NFTs). Showing Top 5. For full audit, visit SolNFTscanner.com. Est: ${formatPrice(estimatedPrice)}`,
                 label: "Select Collections",
                 links: {
                     actions: [
@@ -209,7 +210,7 @@ export async function POST(request: NextRequest) {
         }
 
         // ============================================================
-        // STEP 1: Wallet input received - fetch NFTs and return collections
+        // STEP 1: Wallet input received - fetch NFTs and offer SAMPLE AUDIT
         // ============================================================
         if (!step || step !== "pay") {
             // Get wallet from data (user input) or URL param
@@ -256,44 +257,25 @@ export async function POST(request: NextRequest) {
                 );
             }
 
-            // Group NFTs by collection
-            const collections = groupNFTsByCollection(nfts);
-
-            // Build select options
-            const options = Array.from(collections.values())
-                .sort((a, b) => b.count - a.count)
-                .map((collection) => ({
-                    label: `${collection.name} (${collection.count} NFTs)`,
-                    value: `${collection.id}:${collection.count}`,
-                    selected: true,
-                }));
-
             const totalNfts = nfts.length;
-            const estimatedPrice = calculatePrice(totalNfts);
+            // Sample Size: 20
+            const SAMPLE_SIZE = 20;
+            const estimatedPrice = calculatePrice(SAMPLE_SIZE); // Base price for sample
 
-            // Return collection selection action
+            // Return "Sample Audit" action (No Dropdown - fixes 10KB limit)
             return NextResponse.json(
                 {
                     type: "action",
                     icon: `${APP_URL}/icon.png`,
                     title: "SolNFTscanner Audit",
-                    description: `Found ${totalNfts} NFTs across ${collections.size} collections. Select collections to audit. Estimated price: ${formatPrice(estimatedPrice)}`,
-                    label: "Select Collections",
+                    description: `Found ${totalNfts} NFTs. This Blink provides a sample audit of ${SAMPLE_SIZE} items. For a full portfolio audit, visit SolNFTscanner.com.`,
+                    label: `Audit Sample (${SAMPLE_SIZE} NFTs)`,
                     links: {
                         actions: [
                             {
                                 type: "transaction",
-                                label: "Audit Selected",
-                                href: `/api/actions/audit?wallet=${inputWallet}&step=pay`,
-                                parameters: [
-                                    {
-                                        type: "select",
-                                        name: "collections",
-                                        label: "Select Collections to Audit",
-                                        required: true,
-                                        options: options,
-                                    },
-                                ],
+                                label: `Audit Sample (${formatPrice(estimatedPrice)})`,
+                                href: `/api/actions/audit?wallet=${inputWallet}&step=pay&mode=sample`,
                             },
                         ],
                     },
@@ -306,13 +288,26 @@ export async function POST(request: NextRequest) {
         // STEP 2: Collections selected - create payment transaction
         // ============================================================
         const targetWallet = body.targetWallet || wallet || account;
+        const mode = searchParams.get("mode");
 
         // Get selected items from the request
         let selectedMints: string[] = [];
         let selectedCollections: string[] = [];
         let totalNfts = 0;
 
-        if (data?.mints && Array.isArray(data.mints) && data.mints.length > 0) {
+        if (mode === "sample") {
+            // SAMPLE MODE: Fetch NFTs and take top 20
+            const nfts = await fetchWalletNFTs(targetWallet);
+            if (!nfts || nfts.length === 0) {
+                return NextResponse.json(
+                    { error: "No NFTs found for sample" },
+                    { headers: ACTIONS_CORS_HEADERS, status: 400 }
+                );
+            }
+            // Take top 20 mints
+            selectedMints = nfts.slice(0, 20).map(n => n.id);
+            totalNfts = selectedMints.length;
+        } else if (data?.mints && Array.isArray(data.mints) && data.mints.length > 0) {
             selectedMints = data.mints;
             totalNfts = selectedMints.length;
         } else if (data?.collections) {
