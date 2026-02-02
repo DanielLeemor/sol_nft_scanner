@@ -125,9 +125,10 @@ export async function GET(request: NextRequest) {
         // Group NFTs by collection
         const collections = groupNFTsByCollection(nfts);
 
-        // Build select options
+        // Build select options - Limit to Top 10 to avoid 10KB JSON limit
         const options = Array.from(collections.values())
             .sort((a, b) => b.count - a.count)
+            .slice(0, 10) // STRICT LIMIT for Blinks
             .map((collection) => ({
                 label: `${collection.name} (${collection.count} NFTs)`,
                 value: `${collection.id}:${collection.count}`,
@@ -417,6 +418,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
             {
                 error: error instanceof Error ? error.message : "Transaction creation failed",
+                details: error instanceof Error ? error.stack : undefined
             },
             { headers: ACTIONS_CORS_HEADERS, status: 500 }
         );
