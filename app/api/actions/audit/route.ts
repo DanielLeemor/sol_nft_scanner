@@ -25,14 +25,14 @@ import { supabase } from "@/app/lib/supabase";
 
 /**
  * GET /api/actions/audit
- * Initial scan - returns collection list for selection
+ * Returns initial action or collection selection based on wallet param
  */
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
         const wallet = searchParams.get("wallet");
 
-        // If no wallet provided, return the initial action for wallet input
+        // Step 1: No wallet provided - prompt to scan connected wallet or enter custom
         if (!wallet) {
             return NextResponse.json(
                 {
@@ -41,18 +41,23 @@ export async function GET(request: NextRequest) {
                     title: "SolNFTscanner Audit",
                     description:
                         "Discover hidden value in your Solana NFT portfolio. Scan your wallet to find traits worth more than floor price.",
-                    label: "Enter Wallet",
+                    label: "Scan Wallet",
                     links: {
                         actions: [
                             {
-                                type: "transaction",
-                                label: "Scan Wallet",
-                                href: `/api/actions/audit?wallet={wallet}`,
+                                type: "post",
+                                label: "Scan My Wallet",
+                                href: `/api/actions/audit`,
+                            },
+                            {
+                                type: "post",
+                                label: "Scan Other Wallet",
+                                href: `/api/actions/audit`,
                                 parameters: [
                                     {
                                         type: "text",
                                         name: "wallet",
-                                        label: "Enter your Solana wallet address",
+                                        label: "Enter wallet address",
                                         required: true,
                                     },
                                 ],
@@ -64,6 +69,7 @@ export async function GET(request: NextRequest) {
             );
         }
 
+        // Step 2: Wallet provided via URL - show collection selection
         // Validate wallet address
         if (!isValidSolanaAddress(wallet)) {
             return NextResponse.json(
@@ -116,9 +122,6 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        // Record the scan - removed to prevent rate limiting on simple view
-        // await recordWalletScan(wallet);
-
         // Group NFTs by collection
         const collections = groupNFTsByCollection(nfts);
 
@@ -128,7 +131,7 @@ export async function GET(request: NextRequest) {
             .map((collection) => ({
                 label: `${collection.name} (${collection.count} NFTs)`,
                 value: `${collection.id}:${collection.count}`,
-                selected: true, // Default all selected
+                selected: true,
             }));
 
         const totalNfts = nfts.length;
@@ -146,7 +149,7 @@ export async function GET(request: NextRequest) {
                         {
                             type: "transaction",
                             label: "Audit Selected",
-                            href: `/api/actions/audit?wallet=${wallet}`,
+                            href: `/api/actions/audit?wallet=${wallet}&step=pay`,
                             parameters: [
                                 {
                                     type: "select",
@@ -184,12 +187,14 @@ export async function GET(request: NextRequest) {
 
 /**
  * POST /api/actions/audit
- * Generate payment transaction based on selected collections
+ * Step 1 (no step param): Receive wallet input, return collections
+ * Step 2 (step=pay): Receive collections, return payment transaction
  */
 export async function POST(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
         const wallet = searchParams.get("wallet");
+        const step = searchParams.get("step");
 
         const body = await request.json();
         const { account, data } = body;
@@ -202,20 +207,114 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        // ============================================================
+        // STEP 1: Wallet input received - fetch NFTs and return collections
+        // ============================================================
+        if (!step || step !== "pay") {
+            // Get wallet from data (user input) or URL param
+            const inputWallet = data?.wallet || wallet || account;
+
+            if (!inputWallet || !isValidSolanaAddress(inputWallet)) {
+                return NextResponse.json(
+                    { error: "Invalid wallet address" },
+                    { headers: ACTIONS_CORS_HEADERS, status: 400 }
+                );
+            }
+
+            // Check rate limit
+            const rateLimit = await checkRateLimit(inputWallet);
+            if (!rateLimit.allowed) {
+                return NextResponse.json(
+                    {
+                        type: "action",
+                        icon: `${APP_URL}/icon.png`,
+                        title: "Rate Limited",
+                        description: `Please wait ${rateLimit.waitMinutes} minutes before scanning again.`,
+                        label: "Wait",
+                        disabled: true,
+                    },
+                    { headers: ACTIONS_CORS_HEADERS }
+                );
+            }
+
+            // Fetch NFTs from wallet
+            const nfts = await fetchWalletNFTs(inputWallet);
+
+            if (!nfts || nfts.length === 0) {
+                return NextResponse.json(
+                    {
+                        type: "action",
+                        icon: `${APP_URL}/icon.png`,
+                        title: "No NFTs Found",
+                        description:
+                            "This wallet doesn't contain any NFTs. Try a different wallet address.",
+                        label: "No NFTs",
+                        disabled: true,
+                    },
+                    { headers: ACTIONS_CORS_HEADERS }
+                );
+            }
+
+            // Group NFTs by collection
+            const collections = groupNFTsByCollection(nfts);
+
+            // Build select options
+            const options = Array.from(collections.values())
+                .sort((a, b) => b.count - a.count)
+                .map((collection) => ({
+                    label: `${collection.name} (${collection.count} NFTs)`,
+                    value: `${collection.id}:${collection.count}`,
+                    selected: true,
+                }));
+
+            const totalNfts = nfts.length;
+            const estimatedPrice = calculatePrice(totalNfts);
+
+            // Return collection selection action
+            return NextResponse.json(
+                {
+                    type: "action",
+                    icon: `${APP_URL}/icon.png`,
+                    title: "SolNFTscanner Audit",
+                    description: `Found ${totalNfts} NFTs across ${collections.size} collections. Select collections to audit. Estimated price: ${formatPrice(estimatedPrice)}`,
+                    label: "Select Collections",
+                    links: {
+                        actions: [
+                            {
+                                type: "transaction",
+                                label: "Audit Selected",
+                                href: `/api/actions/audit?wallet=${inputWallet}&step=pay`,
+                                parameters: [
+                                    {
+                                        type: "select",
+                                        name: "collections",
+                                        label: "Select Collections to Audit",
+                                        required: true,
+                                        options: options,
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                },
+                { headers: ACTIONS_CORS_HEADERS }
+            );
+        }
+
+        // ============================================================
+        // STEP 2: Collections selected - create payment transaction
+        // ============================================================
         const targetWallet = body.targetWallet || wallet || account;
 
         // Get selected items from the request
-        // Support both new mints array and legacy collections format
         let selectedMints: string[] = [];
         let selectedCollections: string[] = [];
         let totalNfts = 0;
 
         if (data?.mints && Array.isArray(data.mints) && data.mints.length > 0) {
-            // New granular selection mode
             selectedMints = data.mints;
             totalNfts = selectedMints.length;
         } else if (data?.collections) {
-            // Legacy collection-based selection
             selectedCollections = Array.isArray(data.collections)
                 ? data.collections
                 : [data.collections];
@@ -229,26 +328,24 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Create pending report in Supabase to store selection
+        // Create pending report in Supabase
         const { data: report } = await supabase
             .from("audit_reports")
             .insert({
                 wallet_address: targetWallet,
-                created_by_wallet: account, // Store the payer/requestor
+                created_by_wallet: account,
                 status: "partial",
                 nft_count: totalNfts,
                 report_json: {
                     selected_mints: data?.mints || [],
                     selected_collections: selectedCollections
                 },
-                pending_mints: selectedMints.length > 0 ? selectedMints : [], // Explicitly set pending mints
+                pending_mints: selectedMints.length > 0 ? selectedMints : [],
             })
             .select("id")
             .single();
 
-        // ---------------------------------------------------------
-        // ADMIN BYPASS CHECK
-        // ---------------------------------------------------------
+        // Admin bypass check
         if (account === TREASURY_WALLET) {
             return NextResponse.json(
                 {
@@ -264,7 +361,6 @@ export async function POST(request: NextRequest) {
         const priceLamports = solToLamports(priceSol);
 
         // Build the payment transaction
-        // Fallback logic for RPC connection
         let connection: Connection;
         let blockhashInfo: { blockhash: string; lastValidBlockHeight: number };
 
@@ -279,9 +375,7 @@ export async function POST(request: NextRequest) {
 
         const payerPubkey = new PublicKey(account);
         const treasuryPubkey = new PublicKey(TREASURY_WALLET);
-
-        // Get recent blockhash using the successful info
-        const { blockhash, lastValidBlockHeight } = blockhashInfo;
+        const { blockhash } = blockhashInfo;
 
         // Create transfer instruction
         const transferInstruction = SystemProgram.transfer({
