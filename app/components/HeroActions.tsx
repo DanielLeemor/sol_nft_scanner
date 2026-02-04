@@ -173,7 +173,7 @@ export default function HeroActions() {
             const selectedMints = Array.from(selectedNftIds);
             const walletToScan = targetWalletInput.trim() ? targetWalletInput.trim() : publicKey.toBase58();
 
-            const res = await fetch(`/api/actions/audit?wallet=${walletToScan}`, {
+            const res = await fetch(`/api/actions/audit?wallet=${walletToScan}&step=pay`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
